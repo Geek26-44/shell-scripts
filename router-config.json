@@ -1,0 +1,21 @@
+{
+  "router": {
+    "ip": "192.168.1.254",
+    "username": "admin",
+    "password": "*?4@/=5*5&",
+    "model": "auto-detect",
+    "vnc_port_rule": {
+      "name": "VNC_Screen_Sharing",
+      "external_port": 5900,
+      "internal_ip": "192.168.1.64",
+      "internal_port": 5900,
+      "protocol": "TCP",
+      "enabled": true
+    }
+  },
+  "security": {
+    "allowed_users_only": true,
+    "auto_fix_enabled": true,
+    "notification_on_fix": true
+  }
+}
