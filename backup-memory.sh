@@ -17,7 +17,11 @@ cp -r "$WORKSPACE/memory/"* "$DESKTOP/memory/" 2>/dev/null
 # Храним только последние 30 бэкапов на десктопе
 ls -t "$DESKTOP"/MEMORY_202*.md 2>/dev/null | tail -n +31 | xargs rm -f 2>/dev/null
 
-# Git push в shell-scripts репо
+# Git push в workspace репо
+cd "$WORKSPACE"
+git add -A 2>/dev/null
+git commit -m "backup $DATE" 2>/dev/null
+git push origin master 2>/dev/null
 cd "$REPO" 2>/dev/null || exit 0
 cp "$WORKSPACE/MEMORY.md" . 2>/dev/null
 mkdir -p memory

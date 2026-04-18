@@ -16,6 +16,15 @@
 - **Модель**: только GLM-5, fallbacks УБРАНЫ (16.04.2026)
 
 ## Модели
+
+### Antigravity лимиты
+- **Сброс:** 12:00 AM EST (полночь) — подтверждено 17.04.2026
+- Лимит падает ~10:00 PM EST при активном использовании
+- Opus 4.7 успевает ~15 мин до лимита
+- **Правило:** Opus ТОЛЬКО для ревью/эскалации, НЕ для кодинга
+- Кодинг → Codex (свой лимит)
+- Рутина → Gemma 9B (безлимит)
+- Email: vechiioleg475@gmail.com
 - **Gemma2 9B (локально)** — рутинные задачи, экономия токенов:
   - Транскрипция голосовых (резюме после whisper)
   - Поиск/сортировка по файлам
@@ -36,7 +45,7 @@
 - **Gemma 9B** — ВСЁ второстепенное (heartbeat, транскрипция резюме, summaries, переводы, классификация, анализ логов, PII фильтр)
 - **Qwen 14B** — средней сложности (роутинг, код-ревью)
 - **GLM-5 (мой мозг 🧠)** — основное общение с Димой + сложные задачи
-- **Antigravity** (Opus 4.6, GPT-5, Gemini 3.1 Pro) — если я не могу ответить, эскалация выше
+- **Antigravity** (Opus 4.7, GPT-5, Gemini 3.1 Pro) — если я не могу ответить, эскалация выше
 - Принцип: минимум cloud-токенов, максимум локально
 - Gemma отрабатывает за 0.5-2с на второстепенных задачах
 
@@ -48,12 +57,20 @@ Qwen 14B (локальна, бесплатна)    ← middle tier
      ↓ если сложнее
 GLM-5 (мой мозг, cloud)           ← основное общение + сложное
      ↓ если не могу ответить
-Antigravity (cloud, бесплатна)     ← Opus 4.6, GPT-5, Gemini 3.1 Pro
+Antigravity (cloud, бесплатна)     ← Opus 4.7, GPT-5, Gemini 3.1 Pro
      ↓ если лимит исчерпан
 9pm EST — сброс лимита Antigravity
 ```
 
 **Правило**: всегда начинаю с минимальной модели. Если задача требует больше — иду вверх по цепочке. GLM-5 — мой основной мозг для общения с Димой. Antigravity — эскалация когда я не справляюсь.
+
+### Правило: последние модели
+- Всегда использовать последние версии моделей от провайдеров
+- При выходе новой версии (Opus 4.7→4.8, GPT-5→5.1 и т.д.) → обновлять конфиг и документацию
+- Antigravity: проверять какие модели доступны
+- Claude Code: обновлять через `npm update -g @anthropic-ai/claude-code`
+- Codex CLI: обновлять через `npm update -g @openai/codex`
+- Gemini CLI: обновлять через `npm update -g @anthropic-ai/gemini`
 
 ## GitHub (Geek26-44)
 - code-shelter, LLM-5-thought, qwen-14b, chart.js, learning, mini-game, shell-script-pack
@@ -62,13 +79,54 @@ Antigravity (cloud, бесплатна)     ← Opus 4.6, GPT-5, Gemini 3.1 Pro
 - **Новые скрипты → сразу пушить в shell-scripts репо**
 
 ## MACOS (Multi-Agent Operating System)
-- 33 агента, 6 доменов, 27 governance документов
+- **17 агентов, 6 доменов** (оптимизировано 16.04.2026)
 - Документы: `docs/macos/` (DOC-00 through DOC-27)
 - AGENT_OPERATING_SYSTEM.md, MODEL_ROUTING.md
+- AGENT_MATRIX v3.0 — универсальная система, не только строительство
+
+### Агенты (17):
+1. **Geek (Chief Orchestrator)** — управление системой
+2. **PMO** — задачи, сроки, delivery
+3. **Product Strategy** — дорожная карта
+4. **Data Architect** — схемы, модели данных
+5. **Finance** — учёт, биллинг, маржи
+6. **Budgeting** — бюджетирование, контроль лимитов, ROI
+7. **Sales / Pipeline** — клиенты, продажи
+8. **Web Research** — поиск, анализ, разведка
+9. **Process Improvement** — оптимизация процессов
+10. **Frontend** — UI/UX, дизайн-система
+11. **Backend** — API, БД, интеграции
+12. **AI Systems** — ML, промпт-роутинг
+13. **Security** — аудит, защита
+14. **DevOps / QA** — инфра, деплой, тесты
+15. **Documentation** — документация, база знаний
+16. **Compliance / Legal** — юриспруденция, регуляции, контракты
+17. **Client Success** — клиентский успех, поддержка
+
+### Под-агенты (создаются при запуске проекта):
+- Atlantic Construction: Construction Ops, Estimating, Property Research
 
 ## Finance Dashboard
-- `~/github/Finance`, PostgreSQL 17, localhost:3000
+- `~/github/Finance`, PostgreSQL 17, localhost:8080
 - Финансы ТОЛЬКО в USD
+
+## Установленные инструменты
+- **Ollama**: Gemma2 9B (5.4GB), Qwen 14B (9GB), Qwen VL 7B (6GB), Nomic Embed (274MB)
+- **RAM профилирование**: 15.4/16GB, 5.6GB compressed, 0 swap
+- **Одновременно 1 большая модель** (переключение 4-12с)
+- **Оптимизировано** — НЕ добавлять новые модели, текущий набор оптимален
+
+## Obsidian
+- **Obsidian 1.12.7** — установлен через brew
+- **Vault:** ~/Documents/Obsidian-Vault
+- **Полностью локальный** — НИКАКИЕ данные не уходят наружу (no cloud, no telemetry)
+- **Плагины:** Dataview, Templater, Periodic Notes, Calendar, Tag Wrangler
+- **Структура:** Daily/ (Q&A логи), Analysis/, Decisions/, Lessons/, Context/, Templates/
+- **Gemma 9B** — пишет Q&A лог каждый час (cron)
+- **Использование:** структурированная память, анализ активности, уменьшение лишних действий
+- **Cloud**: GLM-5 (ZAI), Antigravity (Opus 4.6, GPT-5, Gemini 3.1 Pro)
+- **CLI**: Claude Code 2.1.37, Codex CLI 0.99.0, Gemini CLI 0.27.3, WhisperKit 0.18.0
+- **Utils**: ffmpeg, cliclick, gh 2.89.0, Node 24.13.0, Python 3.14.3
 
 ## Скрипты (scripts/)
 
@@ -113,10 +171,25 @@ Antigravity (cloud, бесплатна)     ← Opus 4.6, GPT-5, Gemini 3.1 Pro
 - `automation.sh`, `automation-monitor.sh`, `secure-automation.sh` — ранние версии
 
 ## Правила
+
+### Правило разработки (универсальное)
+1. **НЕ писать с нуля** — найти open-source основу на GitHub
+2. **Найти 2-3 решения** — выбрать лучшее из каждого
+3. **Собрать лучшее** — объединить сильные стороны
+4. **Дописать недостающее** — только то, чего нет в open-source
+5. **Opus 4.7 = архитектор** — создаёт логику, структуру, разбивает на задачи
+6. **Codex / Claude Code = исполнители** — каждый агент получает свою часть
+7. **Geek = контроль** — собираю, проверяю, тестирую
+
+Цепочка: Opus (архитектура) → агенты (кодинг) → Geek (сборка + тест)
 - Финансы в USD
 - Antigravity = primary cloud fallback
 - Уведомлять о завершении процессов
 - Скрипт-откатчик перед конфиг-изменениями
+- **ПЕРЕД любым критичным изменением → `git commit`** (состояние системы)
+- Workspace Git: `Geek26-44/openclaw-workspace` (private), origin/master
+- Backup: Desktop/Geek-Backup/ + GitHub push (cron 2:10 EST)
+- .gitignore: node_modules, *.png/jpg, *.db, *.log, media/, .env
 - Fallback модели ОТКЛЮЧЕНЫ — пока только GLM-5
 - LaunchAgents НЕ называть `ai.openclaw.*` (кроме gateway) — gateway restart убьёт
 
@@ -201,6 +274,6 @@ Constitution (07) → Quality (08) → Escalation (09) → Context (11) → Auto
 - Хочет русский язык по умолчанию, но английский тоже ок
 - Любит голосовые → нужен стабильный whisper
 - Финансы ТОЛЬКО в USD
-- Antigravity: primary cloud fallback (Opus 4.6, GPT-5), лимит сбрасывается 9pm EST
+- Antigravity: primary cloud fallback (Opus 4.6, GPT-5), лимит сбрасывается 12am EST (полночь)
 - Atlantic Construction — строительная CRM/SRM система
 - Пароль от Antigravity: Kostroma, email: vechiioleg475@gmail.com
