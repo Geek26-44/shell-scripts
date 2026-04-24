@@ -1,30 +1,56 @@
 #!/bin/bash
-# transcribe.sh — Fast audio transcription via WhisperKit (Apple Silicon native)
-# Replaces Python whisper for voice messages
-# Usage: transcribe.sh <audio_file>
-
-set -euo pipefail
+# transcribe.sh — Аудио/войс → текст через whisper (local)
+# Usage: ./transcribe.sh <input_audio> [language]
+# Supports: mp3, wav, ogg, m4a, flac, webm
+# Works independently from OpenClaw.
 
 AUDIO="$1"
+LANG="${2:-ru}"
 
-if [[ ! -f "$AUDIO" ]]; then
-    echo "ERROR: file not found: $AUDIO" >&2
+if [ -z "$AUDIO" ]; then
+    echo "Usage: $0 <audio_file> [language: ru|en|auto]"
     exit 1
 fi
 
-# Convert to wav if needed (WhisperKit works best with wav)
-TMPWAV=""
-case "$AUDIO" in
-    *.ogg|*.mp3|*.m4a|*.webm)
-        TMPWAV="/tmp/transcribe_$$.wav"
-        ffmpeg -y -i "$AUDIO" -ar 16000 -ac 1 -c:a pcm_s16le "$TMPWAV" 2>/dev/null
-        AUDIO="$TMPWAV"
-        ;;
-esac
+if [ ! -f "$AUDIO" ]; then
+    echo "Error: File not found: $AUDIO"
+    exit 1
+fi
 
-RESULT=$(whisperkit-cli transcribe --audio-path "$AUDIO" --language ru 2>&1)
+# Convert ogg (Telegram voice) to wav if needed
+EXT="${AUDIO##*.}"
+PROCCESSABLE="$AUDIO"
+
+if [ "$EXT" = "ogg" ] || [ "$EXT" = "webm" ]; then
+    WAV="/tmp/whisper_input_$$.wav"
+    ffmpeg -y -i "$AUDIO" -ar 16000 -ac 1 "$WAV" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "⚠️ ffmpeg conversion failed"
+        exit 1
+    fi
+    PROCCESSABLE="$WAV"
+fi
+
+# Run whisper
+MODEL_SIZE="base"
+if [ "$LANG" = "auto" ]; then
+    whisper "$PROCCESSABLE" --model "$MODEL_SIZE" --output_format txt --output_dir /tmp/whisper_out_$$ --verbose False 2>/dev/null
+else
+    whisper "$PROCCESSABLE" --model "$MODEL_SIZE" --language "$LANG" --output_format txt --output_dir /tmp/whisper_out_$$ --verbose False 2>/dev/null
+fi
+
+RESULT=""
+TXT_FILE="/tmp/whisper_out_$$/$(basename "${PROCCESSABLE%.*}").txt"
+if [ -f "$TXT_FILE" ]; then
+    RESULT=$(cat "$TXT_FILE")
+fi
 
 # Cleanup
-[[ -n "$TMPWAV" && -f "$TMPWAV" ]] && rm -f "$TMPWAV"
+rm -rf "/tmp/whisper_out_$$" "$WAV" 2>/dev/null
+
+if [ -z "$RESULT" ]; then
+    echo "⚠️ Whisper failed — no transcription"
+    exit 1
+fi
 
 echo "$RESULT"

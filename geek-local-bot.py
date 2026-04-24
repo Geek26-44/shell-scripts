@@ -53,6 +53,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("geek-local-bot")
 
 SCRIPTS_DIR = "/Users/geek2026/.openclaw/workspace/scripts"
+SHELL_SCRIPTS = "/Users/geek2026/github/shell-scripts"
 
 # === STATE ===
 conversations = {}
@@ -202,6 +203,61 @@ def process_update(update):
             send_message(chat_id, f"✅ Ollada работает\nМодели:\n{model_list}")
         except:
             send_message(chat_id, "❌ Ollama не отвечает")
+        return
+
+    # === Handle voice/audio messages ===
+    voice = msg.get("voice") or msg.get("audio")
+    if voice:
+        file_id = voice.get("file_id")
+        try:
+            file_info = api("getFile", {"file_id": file_id})
+            file_path = file_info["result"]["file_path"]
+            # Download
+            dl_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+            local_audio = f"/tmp/voice_{user_id}_{int(time.time())}.ogg"
+            urllib.request.urlretrieve(dl_url, local_audio)
+            # Transcribe
+            send_message(chat_id, "🎤 Расшифровываю...")
+            result = subprocess.run(
+                [f"{SHELL_SCRIPTS}/transcribe.sh", local_audio],
+                capture_output=True, text=True, timeout=120
+            )
+            transcription = result.stdout.strip()
+            if transcription:
+                send_message(chat_id, f"📝 Расшифровка:\n{transcription}")
+            else:
+                send_message(chat_id, "⚠️ Не удалось распознать аудио")
+            # Cleanup
+            import os; os.remove(local_audio)
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка аудио: {str(e)[:200]}")
+        return
+
+    # === Handle photo messages ===
+    photos = msg.get("photo")
+    if photos:
+        # Get highest resolution photo
+        file_id = photos[-1]["file_id"]
+        try:
+            file_info = api("getFile", {"file_id": file_id})
+            file_path = file_info["result"]["file_path"]
+            dl_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+            local_img = f"/tmp/photo_{user_id}_{int(time.time())}.jpg"
+            urllib.request.urlretrieve(dl_url, local_img)
+            # OCR
+            send_message(chat_id, "🖼️ Распознаю текст...")
+            result = subprocess.run(
+                [f"{SHELL_SCRIPTS}/ocr.sh", local_img],
+                capture_output=True, text=True, timeout=180
+            )
+            ocr_text = result.stdout.strip()
+            if ocr_text:
+                send_message(chat_id, f"📄 Текст с изображения:\n{ocr_text[:3000]}")
+            else:
+                send_message(chat_id, "⚠️ Не удалось распознать текст")
+            import os; os.remove(local_img)
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка изображения: {str(e)[:200]}")
         return
 
     if not text:

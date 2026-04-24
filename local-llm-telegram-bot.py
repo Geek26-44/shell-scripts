@@ -5,10 +5,13 @@ Usage: python3 local-llm-telegram-bot.py <model> <bot_token>
 Example: python3 local-llm-telegram-bot.py qwen2.5:14b 123456:ABC-DEF
 """
 
-import sys, json, requests, time
+import sys, json, requests, time, os, subprocess
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
+SHELL_SCRIPTS = "/Users/geek2026/github/shell-scripts"
+SHELL_SCRIPTS = "/Users/geek2026/github/shell-scripts"
 TELEGRAM_URL = "https://api.telegram.org/bot{token}/{method}"
+TELEGRAM_FILE_URL = "https://api.telegram.org/file/bot{token}/{path}"
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "qwen2.5:14b"
 TOKEN = sys.argv[2] if len(sys.argv) > 2 else None
@@ -58,9 +61,68 @@ while True:
             chat_id = msg.get("chat", {}).get("id")
             text = msg.get("text", "")
             
-            if not text or text.startswith("/"):
-                if text == "/start" or text == "/help":
-                    tg("sendMessage", chat_id=chat_id, text=f"🤖 {MODEL_SHORT} (local)\nПиши — отвечу.")
+            if text == "/start" or text == "/help":
+                tg("sendMessage", chat_id=chat_id, text=f"🤖 {MODEL_SHORT} (local)\nПиши — отвечу.\nФото → распознаю текст.\nГолос → расшифрую.")
+                continue
+            if text.startswith("/"):
+                continue
+            
+            # === Handle voice/audio ===
+            voice = msg.get("voice") or msg.get("audio")
+            if voice:
+                file_id = voice.get("file_id")
+                try:
+                    file_info = tg("getFile", file_id=file_id)
+                    file_path = file_info["result"]["file_path"]
+                    dl_url = TELEGRAM_FILE_URL.format(token=TOKEN, path=file_path)
+                    local_audio = f"/tmp/voice_{int(time.time())}.ogg"
+                    r = requests.get(dl_url, timeout=30)
+                    with open(local_audio, "wb") as f:
+                        f.write(r.content)
+                    tg("sendChatAction", chat_id=chat_id, action="typing")
+                    result = subprocess.run(
+                        [f"{SHELL_SCRIPTS}/transcribe.sh", local_audio],
+                        capture_output=True, text=True, timeout=120
+                    )
+                    transcription = result.stdout.strip()
+                    if transcription:
+                        tg("sendMessage", chat_id=chat_id, text=f"📝 Расшифровка:\n{transcription[:4000]}")
+                    else:
+                        tg("sendMessage", chat_id=chat_id, text="⚠️ Не удалось распознать")
+                    os.remove(local_audio)
+                except Exception as e:
+                    tg("sendMessage", chat_id=chat_id, text=f"❌ Ошибка аудио: {e}")
+                continue
+            
+            # === Handle photo ===
+            photos = msg.get("photo")
+            if photos:
+                file_id = photos[-1]["file_id"]
+                try:
+                    file_info = tg("getFile", file_id=file_id)
+                    file_path = file_info["result"]["file_path"]
+                    dl_url = TELEGRAM_FILE_URL.format(token=TOKEN, path=file_path)
+                    local_img = f"/tmp/photo_{int(time.time())}.jpg"
+                    r = requests.get(dl_url, timeout=30)
+                    with open(local_img, "wb") as f:
+                        f.write(r.content)
+                    tg("sendChatAction", chat_id=chat_id, action="typing")
+                    result = subprocess.run(
+                        [f"{SHELL_SCRIPTS}/ocr.sh", local_img],
+                        capture_output=True, text=True, timeout=180
+                    )
+                    ocr_text = result.stdout.strip()
+                    if ocr_text:
+                        tg("sendMessage", chat_id=chat_id, text=f"📄 Текст:\n{ocr_text[:4000]}")
+                    else:
+                        tg("sendMessage", chat_id=chat_id, text="⚠️ Не удалось распознать")
+                    os.remove(local_img)
+                except Exception as e:
+                    tg("sendMessage", chat_id=chat_id, text=f"❌ Ошибка: {e}")
+                continue
+            
+            # === Text message ===
+            if not text:
                 continue
             
             # Typing indicator
