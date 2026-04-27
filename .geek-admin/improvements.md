@@ -1,5 +1,3 @@
-# Улучшения — shell-scripts
-
-Предложения по улучшению проверок и конфигурации.
-Генерируются еженедельным анализом learning-log.md.
-
+# Improvements
+- Write unit tests for scripts to ensure reliability.
+- Automate regular refactoring sessions to keep scripts efficient and maintainable.
