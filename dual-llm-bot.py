@@ -1,248 +1,234 @@
 #!/usr/bin/env python3
 """
 Dual LLM Telegram Bot — две модели + эвристика выбора лучшего ответа.
-Полностью независим от OpenClaw.
+Полностью автономный бот. Независим от любых внешних систем.
 
-Usage: python3 dual-llm-bot.py <bot_token>
-
-Ответы:
-  1️⃣ qwen3.5:9b
-  2️⃣ gemma4:e4b
-  🏆 Эвристика: лучший ответ + почему
+Usage: python3 dual-llm-bot.py
+  Token читается из .bot-token в той же директории.
 """
 
-import sys, json, requests, time, os, subprocess, threading, re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import sys, json, requests, time, os, subprocess, re, logging
+from logging.handlers import RotatingFileHandler
+from collections import deque
 
-# === CONFIG ===
-TOKEN = sys.argv[1] if len(sys.argv) > 1 else None
-if not TOKEN:
-    print("Usage: python3 dual-llm-bot.py <bot_token>")
+# === PATHS ===
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TOKEN_FILE = os.path.join(SCRIPT_DIR, ".bot-token")
+LOG_FILE = os.path.join(SCRIPT_DIR, "logs", "dual-llm-bot.log")
+
+# === TOKEN ===
+try:
+    with open(TOKEN_FILE) as f:
+        TOKEN = f.read().strip()
+except FileNotFoundError:
+    print(f"Token file not found: {TOKEN_FILE}")
     sys.exit(1)
 
+# === CONFIG ===
 ALLOWED_USER = 170285780
-OLLAMA_URL = "http://localhost:11434/api/generate"
-SHELL_SCRIPTS = "/Users/geek2026/github/shell-scripts"
+OLLAMA_CHAT = "http://localhost:11434/api/chat"
+OLLAMA_GEN = "http://localhost:11434/api/generate"
+SHELL_SCRIPTS = SCRIPT_DIR
 TELEGRAM_URL = "https://api.telegram.org/bot{token}/{method}"
 TELEGRAM_FILE_URL = "https://api.telegram.org/file/bot{token}/{path}"
+
+SYSTEM_PROMPT = "Ты — полезный AI-ассистент. Отвечай чётко, по делу, на языке вопроса. Кратко но полно."
 
 MODELS = {
     "qwen3.5:9b": {"emoji": "🟣", "short": "Qwen 3.5 9B", "ctx": 4096, "timeout": 300},
     "gemma4:e4b": {"emoji": "🔵", "short": "Gemma 4 E4B", "ctx": 4096, "timeout": 300},
 }
 
-OFFSET = 0
+# === CONTEXT ===
+CONTEXT_SIZE = 10  # последних сообщений в контексте
+chat_history = deque(maxlen=CONTEXT_SIZE)
 
+# === LOGGING ===
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+log = logging.getLogger("dual-bot")
+log.setLevel(logging.INFO)
+handler = RotatingFileHandler(LOG_FILE, maxBytes=2*1024*1024, backupCount=3)
+handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+log.addHandler(handler)
+# Also to stdout
+sh = logging.StreamHandler()
+sh.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+log.addHandler(sh)
+
+# === HELPERS ===
 def tg(method, **kwargs):
     url = TELEGRAM_URL.format(token=TOKEN, method=method)
     r = requests.post(url, json=kwargs, timeout=30)
     return r.json()
 
-def ollama_single(model, prompt, ctx=4096, timeout=300, retries=3):
-    """Query one model with retry logic. Returns (model_name, response, speed_info)."""
+def unload_model(model):
+    try:
+        requests.post(OLLAMA_GEN, json={"model": model, "keep_alive": "0s", "stream": False}, timeout=10)
+    except:
+        pass
+
+def check_ollama():
+    """Quick healthcheck — is Ollama alive?"""
+    try:
+        r = requests.get("http://localhost:11434/api/ps", timeout=5)
+        return r.ok
+    except:
+        return False
+
+def ollama_chat(model, messages, ctx=4096, timeout=300, retries=3):
+    """Query model via chat API. Returns (model, response, speed_info)."""
     for attempt in range(retries):
         try:
-            # Unload previous model to free RAM
-            try:
-                requests.post(OLLAMA_URL, json={"model": model, "keep_alive": "0s"}, timeout=5)
-            except:
-                pass
-            time.sleep(1)
-            
-            r = requests.post(OLLAMA_URL, json={
+            r = requests.post(OLLAMA_CHAT, json={
                 "model": model,
-                "prompt": prompt,
+                "messages": messages,
                 "stream": False,
-                "options": {"num_ctx": ctx}
+                "options": {"num_ctx": ctx},
+                "think": False
             }, timeout=timeout)
             if r.ok:
                 data = r.json()
-                resp = data.get("response", "").strip()
-                if resp:
+                msg = data.get("message", {}).get("content", "").strip()
+                if msg:
                     ec = data.get("eval_count", 0)
                     el = data.get("eval_duration", 0)
                     speed = f"{ec/(el/1e9):.1f} tok/s" if el > 0 else "? tok/s"
-                    return (model, resp, speed)
-                # Empty response = model loading, retry
-                print(f"  {model}: empty response (attempt {attempt+1}), retrying...")
-                sys.stdout.flush()
-                time.sleep(10)
+                    return (model, msg, speed)
+                log.info(f"  {model}: empty (attempt {attempt+1}), retrying...")
+                time.sleep(8)
                 continue
             return (model, f"⚠️ Ollama error: {r.status_code}", "error")
-        except (requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
-            print(f"  {model}: connection error (attempt {attempt+1}): {e}")
-            sys.stdout.flush()
-            time.sleep(15)
+        except (requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError):
+            log.info(f"  {model}: connection error (attempt {attempt+1})")
+            time.sleep(12)
         except requests.exceptions.Timeout:
             return (model, "⏱️ Таймаут", "timeout")
         except Exception as e:
-            print(f"  {model}: error (attempt {attempt+1}): {e}")
-            sys.stdout.flush()
-            time.sleep(10)
+            log.info(f"  {model}: error (attempt {attempt+1}): {e}")
+            time.sleep(8)
     return (model, f"⚠️ Не удалось получить ответ после {retries} попыток", "error")
 
 def query_both_models(prompt):
-    """Query models SEQUENTIALLY — 16GB RAM can't fit both at once."""
+    """Query models SEQUENTIALLY — 16GB RAM can't fit both."""
     results = {}
-    for model, cfg in MODELS.items():
-        model_name, resp, speed = ollama_single(model, prompt, cfg["ctx"], cfg["timeout"])
+    model_list = list(MODELS.items())
+
+    # Build messages with context
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for role, content in chat_history:
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": prompt})
+
+    for i, (model, cfg) in enumerate(model_list):
+        log.info(f"  Querying {model}...")
+        model_name, resp, speed = ollama_chat(model, messages, cfg["ctx"], cfg["timeout"])
         results[model_name] = (resp, speed)
+        log.info(f"  {model}: {speed}, {len(resp)} chars")
+        if i < len(model_list) - 1:
+            unload_model(model)
+            time.sleep(2)
     return results
 
 def heuristic_score(question, answer):
-    """
-    Score an answer 0-100 based on heuristic criteria.
-    Higher = better.
-    """
+    """Score 0-100. Higher = better."""
     if not answer or answer.startswith("⚠️") or answer.startswith("⏱️"):
         return 0
-    
-    score = 50  # baseline
-    
-    # Length: too short is bad (<50 chars), too long is slightly penalized
+
+    score = 50
+
     length = len(answer)
-    if length < 30:
-        score -= 30
-    elif length < 100:
-        score -= 10
-    elif 200 <= length <= 2000:
-        score += 10
-    elif length > 3000:
-        score -= 5  # slightly penalize rambling
-    
-    # Structure bonuses
-    if "```" in answer or "\n    " in answer:
-        score += 5  # has code examples
-    if re.search(r'\d+\.', answer):
-        score += 5  # has numbered list
-    if re.search(r'[-•]\s', answer):
-        score += 3  # has bullet points
-    if "**" in answer or "__" in answer:
-        score += 3  # has bold emphasis
-    
-    # Relevance: check if key words from question appear in answer
+    if length < 30: score -= 30
+    elif length < 100: score -= 10
+    elif 200 <= length <= 2000: score += 10
+    elif length > 3000: score -= 5
+
+    if "```" in answer or "\n    " in answer: score += 5
+    if re.search(r'\d+\.', answer): score += 5
+    if re.search(r'[-•]\s', answer): score += 3
+    if "**" in answer or "__" in answer: score += 3
+
     q_words = set(re.findall(r'\b\w{4,}\b', question.lower()))
     a_words = set(re.findall(r'\b\w{4,}\b', answer.lower()))
     overlap = len(q_words & a_words)
-    if overlap > 0:
-        score += min(overlap * 3, 15)
-    
-    # Russian text bonus (if question is in Russian)
+    if overlap > 0: score += min(overlap * 3, 15)
+
     if re.search(r'[а-яА-Я]', question):
-        if re.search(r'[а-яА-Я]', answer):
-            score += 10
-        else:
-            score -= 15  # answered in wrong language
-    
-    # Confidence markers
-    confidence_phrases = ["например", "example", "в частности", "specifically", 
-                          "потому что", "because", "следовательно", "therefore"]
-    for phrase in confidence_phrases:
-        if phrase in answer.lower():
-            score += 2
-    
-    # Hedge phrases (uncertainty) — slight penalty
-    hedge_phrases = ["не уверен", "not sure", "возможно", "maybe", "я думаю"]
-    for phrase in hedge_phrases:
-        if phrase in answer.lower():
-            score -= 2
-    
+        if re.search(r'[а-яА-Я]', answer): score += 10
+        else: score -= 15
+
+    for p in ["например", "потому что", "because", "следовательно"]:
+        if p in answer.lower(): score += 2
+    for p in ["не уверен", "возможно", "maybe"]:
+        if p in answer.lower(): score -= 2
+
     return max(0, min(100, score))
 
 def pick_best(question, results):
-    """
-    Pick the best response using heuristic scoring.
-    Returns (best_model, best_response, details).
-    """
     scores = {}
-    details_lines = []
-    
+    details = []
     for model, (response, speed) in results.items():
-        score = heuristic_score(question, response)
+        s = heuristic_score(question, response)
+        scores[model] = s
         cfg = MODELS[model]
-        scores[model] = score
-        details_lines.append(f"{cfg['emoji']} {cfg['short']}: {score}/100 ({speed})")
-    
+        details.append(f"{cfg['emoji']} {cfg['short']}: {s}/100 ({speed})")
+
     best_model = max(scores, key=scores.get)
-    best_response = results[best_model][0]
-    
-    # If scores are equal (within 5 pts), prefer qwen3.5 (smarter model)
-    sorted_models = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    if len(sorted_models) >= 2 and sorted_models[0][1] - sorted_models[1][1] < 5:
+    sorted_m = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    if len(sorted_m) >= 2 and sorted_m[0][1] - sorted_m[1][1] < 5:
         if "qwen3.5" in scores:
             best_model = "qwen3.5:9b"
-            best_response = results[best_model][0]
-    
-    details = "\n".join(details_lines)
-    return best_model, best_response, details
 
-def send_long(chat_id, text, prefix=""):
-    """Send message, splitting if >4096 chars."""
-    full = f"{prefix}{text}" if prefix else text
-    if len(full) > 4096:
-        for i in range(0, len(full), 4096):
-            tg("sendMessage", chat_id=chat_id, text=full[i:i+4096])
-    else:
-        tg("sendMessage", chat_id=chat_id, text=full)
+    return best_model, results[best_model][0], "\n".join(details)
+
+def send_long(chat_id, text):
+    """Send, splitting at 4096 chars."""
+    for i in range(0, len(text), 4096):
+        tg("sendMessage", chat_id=chat_id, text=text[i:i+4096])
 
 def process_media(msg, chat_id):
-    """Handle voice/audio/photo. Returns transcription/OCR text or None."""
+    """Handle voice/photo. Returns text or None."""
     voice = msg.get("voice") or msg.get("audio")
     if voice:
-        file_id = voice.get("file_id")
         try:
-            file_info = tg("getFile", file_id=file_id)
-            file_path = file_info["result"]["file_path"]
-            dl_url = TELEGRAM_FILE_URL.format(token=TOKEN, path=file_path)
-            local_audio = f"/tmp/voice_{int(time.time())}.ogg"
-            r = requests.get(dl_url, timeout=30)
-            with open(local_audio, "wb") as f:
-                f.write(r.content)
+            file_info = tg("getFile", file_id=voice["file_id"])
+            dl_url = TELEGRAM_FILE_URL.format(token=TOKEN, path=file_info["result"]["file_path"])
+            local = f"/tmp/voice_{int(time.time())}.ogg"
+            with open(local, "wb") as f:
+                f.write(requests.get(dl_url, timeout=30).content)
             tg("sendChatAction", chat_id=chat_id, action="typing")
-            result = subprocess.run(
-                [f"{SHELL_SCRIPTS}/transcribe.sh", local_audio],
-                capture_output=True, text=True, timeout=120
-            )
-            transcription = result.stdout.strip()
-            os.remove(local_audio)
-            if transcription:
-                return transcription
-            return None
+            result = subprocess.run([f"{SHELL_SCRIPTS}/transcribe.sh", local],
+                                    capture_output=True, text=True, timeout=120)
+            os.remove(local)
+            return result.stdout.strip() or None
         except Exception as e:
             tg("sendMessage", chat_id=chat_id, text=f"❌ Ошибка аудио: {e}")
             return None
-    
+
     photos = msg.get("photo")
     if photos:
-        file_id = photos[-1]["file_id"]
         try:
-            file_info = tg("getFile", file_id=file_id)
-            file_path = file_info["result"]["file_path"]
-            dl_url = TELEGRAM_FILE_URL.format(token=TOKEN, path=file_path)
-            local_img = f"/tmp/photo_{int(time.time())}.jpg"
-            r = requests.get(dl_url, timeout=30)
-            with open(local_img, "wb") as f:
-                f.write(r.content)
+            file_info = tg("getFile", file_id=photos[-1]["file_id"])
+            dl_url = TELEGRAM_FILE_URL.format(token=TOKEN, path=file_info["result"]["file_path"])
+            local = f"/tmp/photo_{int(time.time())}.jpg"
+            with open(local, "wb") as f:
+                f.write(requests.get(dl_url, timeout=30).content)
             tg("sendChatAction", chat_id=chat_id, action="typing")
-            result = subprocess.run(
-                [f"{SHELL_SCRIPTS}/ocr.sh", local_img],
-                capture_output=True, text=True, timeout=180
-            )
-            ocr_text = result.stdout.strip()
-            os.remove(local_img)
-            if ocr_text:
-                return f"[На изображении]: {ocr_text}"
-            return None
+            result = subprocess.run([f"{SHELL_SCRIPTS}/ocr.sh", local],
+                                    capture_output=True, text=True, timeout=180)
+            os.remove(local)
+            ocr = result.stdout.strip()
+            return f"[На изображении]: {ocr}" if ocr else None
         except Exception as e:
             tg("sendMessage", chat_id=chat_id, text=f"❌ Ошибка: {e}")
             return None
-    
     return None
 
-print("🤖 Dual LLM Bot started")
-print(f"   Models: {', '.join(MODELS.keys())}")
-print(f"   Mode: dual + heuristic")
-sys.stdout.flush()
+# === MAIN ===
+OFFSET = 0
+log.info("🤖 Dual LLM Bot started")
+log.info(f"   Models: {', '.join(MODELS.keys())}")
+log.info(f"   API: chat (think=false) | Context: {CONTEXT_SIZE} messages")
+log.info(f"   Mode: compact (best answer + scores)")
 
 while True:
     try:
@@ -253,28 +239,37 @@ while True:
             chat_id = msg.get("chat", {}).get("id")
             text = msg.get("text", "")
             sender = msg.get("from", {}).get("id", 0)
-            
-            # Auth check
+
             if sender != ALLOWED_USER:
                 continue
-            
+
+            # Commands
             if text == "/start" or text == "/help":
                 tg("sendMessage", chat_id=chat_id, text=(
                     "🤖 Dual LLM Bot\n"
-                    "Две модели отвечают параллельно, затем эвристика выбирает лучший ответ.\n\n"
+                    "Две модели отвечают, эвристика выбирает лучший.\n\n"
                     f"Модели: {', '.join(MODELS.keys())}\n"
-                    "Фото → OCR, Голос → транскрипция\n"
-                    "/mode — переключить режим (dual/single)"
+                    "Фото → OCR | Голос → транскрипция\n"
+                    "/clear — очистить контекст\n"
+                    "/verbose — показать оба ответа"
                 ))
                 continue
-            
-            if text == "/mode":
-                tg("sendMessage", chat_id=chat_id, text="Режим: dual (обе модели + эвристика)")
+
+            if text == "/clear":
+                chat_history.clear()
+                tg("sendMessage", chat_id=chat_id, text="🗑 Контекст очищен")
                 continue
-            
+
+            if text == "/verbose":
+                tg("sendMessage", chat_id=chat_id, text=(
+                    "Режим: compact (только лучший ответ)\n"
+                    "Скоро будет переключатель 🔄"
+                ))
+                continue
+
             if text.startswith("/"):
                 continue
-            
+
             # Build prompt
             media_text = process_media(msg, chat_id)
             if media_text and not text:
@@ -283,38 +278,33 @@ while True:
                 prompt = f"{media_text}\n\n{text}"
             else:
                 prompt = text
-            
+
             if not prompt:
                 continue
-            
-            # === DUAL MODE: query both models ===
+
+            # Healthcheck
+            if not check_ollama():
+                tg("sendMessage", chat_id=chat_id, text="⚠️ Ollama не отвечает. Подожди минуту.")
+                continue
+
+            log.info(f"Q: {prompt[:80]}")
             tg("sendChatAction", chat_id=chat_id, action="typing")
-            
-            # Send both in parallel
+
             results = query_both_models(prompt)
-            
-            # Send each model's response as separate message
-            for model, cfg in MODELS.items():
-                if model in results:
-                    response, speed = results[model]
-                    header = f"{cfg['emoji']} {cfg['short']} ({speed}):\n\n"
-                    send_long(chat_id, response, prefix=header)
-            
-            # Heuristic: pick best
             best_model, best_response, details = pick_best(prompt, results)
             best_cfg = MODELS[best_model]
-            
-            verdict = (
-                f"🏆 Эвристика: {best_cfg['short']}\n\n"
-                f"📊 Оценки:\n{details}\n\n"
-                f"{'─' * 30}\n\n"
-                f"{best_response}"
-            )
-            send_long(chat_id, verdict)
-                
+
+            # Save to context
+            chat_history.append(("user", prompt))
+            chat_history.append(("assistant", best_response))
+
+            # Compact format: best answer + scores
+            reply = f"🏆 {best_cfg['short']}\n{details}\n{'─'*30}\n\n{best_response}"
+            send_long(chat_id, reply)
+
     except KeyboardInterrupt:
-        print("\nStopped.")
+        log.info("Stopped.")
         break
     except Exception as e:
-        print(f"Loop error: {e}")
+        log.error(f"Loop error: {e}")
         time.sleep(5)
