@@ -52,6 +52,9 @@ class CommandType(Enum):
     ESCALATE = "escalate"
     REPEAT = "repeat"
     CANCEL = "cancel"
+    WEB_SEARCH = "web_search"
+    CHAIN = "chain"
+    REMIND = "remind"
     NONE = "none"
 
 
@@ -188,6 +191,16 @@ class CommandParser:
                 (r'^\s*cancel\s*$', {}),
                 (r'^\s*undo\s*$', {}),
             ],
+            CommandType.WEB_SEARCH: [
+                (r'найди\s+в\s+интернете\s+(.+)', {"query": 1}),
+                (r'гугли\s+(.+)', {"query": 1}),
+                (r'найди\s+онлайн\s+(.+)', {"query": 1}),
+                (r'search\s+web\s+(.+)', {"query": 1}),
+            ],
+            CommandType.REMIND: [
+                (r'напомни\s+(.+)', {"text": 1}),
+                (r'remind\s+me\s+(.+)', {"text": 1}),
+            ],
         }
 
         self.keywords: Dict[CommandType, List[str]] = {
@@ -219,6 +232,8 @@ class CommandParser:
             ],
             CommandType.REPEAT: ["повтори", "ещё раз", "сделай ещё", "repeat", "again"],
             CommandType.CANCEL: ["отмени", "отмена", "откати", "cancel", "undo"],
+            CommandType.WEB_SEARCH: ["найди в интернете", "search web", "гугли", "найди онлайн"],
+            CommandType.REMIND: ["напомни", "remind me"],
         }
 
         self._load_patterns()
@@ -247,6 +262,10 @@ class CommandParser:
     def parse(self, text: str, llm_hint: Optional[str] = None) -> ParsedCommand:
         text_lower = text.lower().strip()
 
+        chain_steps = self._parse_chain_steps(text)
+        if chain_steps:
+            return ParsedCommand(CommandType.CHAIN, {"steps": chain_steps}, 0.85, text)
+
         for cmd_type, patterns in self.patterns.items():
             for pattern, param_map in patterns:
                 match = re.search(pattern, text_lower)
@@ -256,6 +275,8 @@ class CommandParser:
                         val = match.group(gidx) if gidx <= len(match.groups()) else None
                         if val:
                             params[pname] = val.strip()
+                    if cmd_type == CommandType.REMIND:
+                        params = self._extract_reminder_params(text)
                     return ParsedCommand(cmd_type, params, 0.9, text)
 
         for cmd_type, kws in self.keywords.items():
@@ -275,6 +296,17 @@ class CommandParser:
 
         if cmd_type in (CommandType.OPEN_URL, CommandType.DOWNLOAD) and url_match:
             params["url"] = url_match.group(0)
+        elif cmd_type == CommandType.WEB_SEARCH:
+            lower = text.lower()
+            for kw in self.keywords.get(cmd_type, []):
+                if kw in lower:
+                    idx = lower.index(kw) + len(kw)
+                    params["query"] = text[idx:].strip(" :—-")
+                    break
+            if "query" not in params:
+                params["query"] = text.strip()
+        elif cmd_type == CommandType.REMIND:
+            params.update(self._extract_reminder_params(text))
         elif cmd_type == CommandType.ESCALATE:
             params["task"] = text
         elif cmd_type == CommandType.RESTART_SERVICE:
@@ -299,6 +331,49 @@ class CommandParser:
                 params["node1"] = match.group(1).strip()
                 params["node2"] = match.group(2).strip()
 
+        return params
+
+    def _parse_chain_steps(self, text: str) -> List[str]:
+        parts = re.split(r'\s+(?:и\s+если|и\s+тогда|а\s+потом|then|and\s+then)\s+', text, flags=re.IGNORECASE)
+        steps = [p.strip(" .;") for p in parts if p.strip(" .;")]
+        if len(steps) < 2:
+            return []
+        return steps[:3]
+
+    def _extract_reminder_params(self, text: str) -> Dict[str, Any]:
+        raw = re.sub(r'^\s*(напомни|remind\s+me)\s*', '', text, flags=re.IGNORECASE).strip()
+        lower = raw.lower()
+        params: Dict[str, Any] = {"text": raw}
+
+        tomorrow = re.search(r'завтра\s+в\s+(\d{1,2})(?::(\d{2}))?\s*(?:утра|am)?', lower)
+        if tomorrow:
+            hour = int(tomorrow.group(1))
+            minute = int(tomorrow.group(2) or 0)
+            if "pm" in lower and hour < 12:
+                hour += 12
+            trigger = (datetime.now() + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+            reminder_text = (raw[:tomorrow.start()] + raw[tomorrow.end():]).strip(" ,.-")
+            params.update({"text": reminder_text or raw, "trigger_at": trigger.isoformat()})
+            return params
+
+        rel = re.search(
+            r'через\s+(\d+)\s*(мин(?:ут[уы]?)?|час(?:а|ов)?|д(?:ень|ня|ней)|дн(?:я|ей)?)\s*(.*)',
+            lower,
+            flags=re.IGNORECASE,
+        )
+        if rel:
+            amount = int(rel.group(1))
+            unit = rel.group(2)
+            if unit.startswith("мин"):
+                delta = timedelta(minutes=amount)
+            elif unit.startswith("час"):
+                delta = timedelta(hours=amount)
+            else:
+                delta = timedelta(days=amount)
+            params.update({
+                "text": raw[rel.end(2):].strip(" ,.-") or raw,
+                "trigger_at": (datetime.now() + delta).isoformat(),
+            })
         return params
 
     def _parse_llm_hint(self, hint: str, original: str) -> ParsedCommand:
@@ -374,8 +449,16 @@ class Memory:
                 content TEXT,
                 timestamp TEXT
             );
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                text TEXT,
+                trigger_at TEXT,
+                sent INTEGER DEFAULT 0
+            );
             CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, id);
             CREATE INDEX IF NOT EXISTS idx_facts_topic ON facts(topic);
+            CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(sent, trigger_at);
         """)
         self._conn.commit()
 
@@ -411,6 +494,17 @@ class Memory:
             (limit,),
         ).fetchall()
         return [{"text": r[0], "type": r[1], "success": bool(r[2]), "duration": r[3]} for r in rows]
+
+    def get_commands_since(self, since_iso: str, limit: int = 100) -> List[Dict]:
+        rows = self._conn.execute(
+            "SELECT raw_text, command_type, success, duration, timestamp FROM commands "
+            "WHERE timestamp >= ? ORDER BY id DESC LIMIT ?",
+            (since_iso, limit),
+        ).fetchall()
+        return [
+            {"text": r[0], "type": r[1], "success": bool(r[2]), "duration": r[3], "timestamp": r[4]}
+            for r in rows
+        ]
 
     def save_pattern(self, keyword: str, cmd_type: str) -> None:
         self._conn.execute(
@@ -453,6 +547,25 @@ class Memory:
         )
         self._conn.commit()
         return cur.rowcount
+
+    def add_reminder(self, chat_id: int, text: str, trigger_at: str) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO reminders (chat_id, text, trigger_at, sent) VALUES (?, ?, ?, 0)",
+            (chat_id, text, trigger_at),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def get_due_reminders(self, now_iso: str) -> List[Tuple[int, int, str, str]]:
+        return self._conn.execute(
+            "SELECT id, chat_id, text, trigger_at FROM reminders "
+            "WHERE sent = 0 AND trigger_at <= ? ORDER BY trigger_at ASC",
+            (now_iso,),
+        ).fetchall()
+
+    def mark_reminder_sent(self, reminder_id: int) -> None:
+        self._conn.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (reminder_id,))
+        self._conn.commit()
 
     def prune_old_facts(self, days: int = 90) -> int:
         """Delete facts whose timestamp is older than `days` days. Returns count deleted."""
@@ -718,6 +831,42 @@ class OllamaBrain:
             if attempt < LLM_RETRIES - 1:
                 time.sleep(LLM_BACKOFF[attempt] if attempt < len(LLM_BACKOFF) else 10)
         return None
+
+    def summarize_history_if_needed(self, chat_id: int) -> bool:
+        """
+        Compact long in-memory chat history into a short hidden summary.
+        Returns True when compaction happened.
+        """
+        if len(self.chat_history) <= 15:
+            return False
+
+        recent = list(self.chat_history)[-10:]
+        transcript = "\n".join(f"{role}: {content[:500]}" for role, content in recent)
+        messages = [
+            {"role": "system", "content": "Сделай краткое резюме диалога для памяти бота. Только факты, решения, открытые вопросы."},
+            {"role": "user", "content": transcript},
+        ]
+        model = "gemma4:e4b" if "gemma4:e4b" in MODELS else list(MODELS.keys())[0]
+        summary = self.ollama_chat(model, messages, timeout=15)
+        self.unload_model(model)
+        if not summary:
+            return False
+
+        summary = summary[:1500]
+        try:
+            self.memory.save_fact("summary", summary)
+        except Exception as e:
+            self.log.warning("save summary fact failed: %s", e)
+
+        self.chat_history.clear()
+        self.chat_history.append(("system", f"[summary] {summary}"))
+        try:
+            self.memory.clear_context(chat_id)
+            self.memory.save_message(chat_id, "system", f"[summary] {summary}")
+        except Exception as e:
+            self.log.warning("persist summary context failed: %s", e)
+        self.log.info("Compacted chat_history into summary (%d chars)", len(summary))
+        return True
 
     def ollama_chat_stream(self, model: str, messages: List[Dict],
                            on_chunk: Optional[Callable[[str], None]] = None,

@@ -9,9 +9,11 @@ import os
 import re
 import signal
 import shutil
+import subprocess
 import sys
 import time
 from collections import deque
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -25,7 +27,7 @@ from config import (
     ALLOWED_USER, BOT_TOKEN, MAX_COMMANDS_PER_MIN, MODELS,
     POLL_TIMEOUT, REQUEST_TIMEOUT,
     TELEGRAM_URL, TELEGRAM_FILE_URL, WATCHDOG_INTERVAL, MAX_CONSECUTIVE_ERRORS,
-    DISK_WARNING_PCT, BotSettings, setup_logging, SHELL_SCRIPTS,
+    DISK_WARNING_PCT, BotSettings, setup_logging, SHELL_SCRIPTS, OLLAMA_CHAT,
 )
 from brain import (
     CommandParser, SafetyValidator, OllamaBrain, Memory,
@@ -375,6 +377,9 @@ class Geek26Bot:
         if text.lower() == "/stats":
             return self._get_stats()
 
+        if text.lower() == "/daily":
+            return self._get_daily()
+
         if text.lower() == "/help":
             return self._get_help()
 
@@ -448,6 +453,7 @@ class Geek26Bot:
             result = msg
             self.memory.save_message(chat_id, "user", text)
             self.memory.save_message(chat_id, "assistant", result)
+            self._maybe_summarize_memory(chat_id)
             self._maybe_send_attachment(chat_id)
             return result
 
@@ -474,6 +480,9 @@ class Geek26Bot:
             if not ok:
                 return f"⛔ {err}"
 
+            if command.type == CommandType.REMIND:
+                command.params["chat_id"] = chat_id
+
             if self.safety.needs_confirmation(command):
                 # Set TTL'd pending confirmation
                 self.pending_confirm[chat_id] = (command, time.time() + PENDING_CONFIRM_TTL)
@@ -492,6 +501,7 @@ class Geek26Bot:
 
             self.memory.save_message(chat_id, "user", text)
             self.memory.save_message(chat_id, "assistant", result)
+            self._maybe_summarize_memory(chat_id)
             return result
 
         # ── Regular chat (with streaming) ──────────────────────────────
@@ -525,6 +535,7 @@ class Geek26Bot:
 
             result = self.brain.process_chat_streaming(text, on_chunk=on_chunk)
             self.memory.save_message(chat_id, "assistant", result)
+            self._maybe_summarize_memory(chat_id)
 
             # Final edit: drop the cursor, render the full reply.
             if result and len(result) <= TG_MAX_LEN:
@@ -540,7 +551,22 @@ class Geek26Bot:
         # No placeholder available (batch mode) — fall through to non-streaming
         result = self.brain.process_chat(text)
         self.memory.save_message(chat_id, "assistant", result)
+        self._maybe_summarize_memory(chat_id)
         return result
+
+    def send_proactive_message(self, chat_id: int, text: str) -> bool:
+        """Send a bot-initiated Telegram message outside a user request."""
+        try:
+            return send_message(chat_id, text)
+        except Exception as e:
+            self.log.warning("send_proactive_message failed: %s", e)
+            return False
+
+    def _maybe_summarize_memory(self, chat_id: int) -> None:
+        try:
+            self.brain.summarize_history_if_needed(chat_id)
+        except Exception as e:
+            self.log.warning("summarize_history_if_needed: %s", e)
 
     def _maybe_send_attachment(self, chat_id: int) -> None:
         """
@@ -577,6 +603,9 @@ class Geek26Bot:
 • покажи коммиты [репо]
 • статус [репо]
 • проверь сервисы
+• найди в интернете [запрос]
+• напомни через 2 часа [текст]
+• проверь сервисы и если что-то упало — рестартни
 • место на диске
 • покажи процессы
 • скриншот
@@ -585,6 +614,7 @@ class Geek26Bot:
 Бот-команды:
 /help — эта справка
 /stats — статистика
+/daily — ежедневный дайджест
 /clear — очистить контекст
 /remember <тема> <текст> — запомнить факт
 /facts — что я знаю
@@ -601,6 +631,33 @@ class Geek26Bot:
                 f"  Команд: {total} (✅ {success}, ❌ {total - success})\n"
                 f"  Контекст: {len(self.brain.chat_history)}/{self.brain.chat_history.maxlen}\n"
                 f"  SQLite: {'✅' if self.memory.is_healthy() else '❌'}")
+
+    def _get_daily(self) -> str:
+        since = (datetime.now() - timedelta(hours=24)).isoformat()
+        cmds = self.memory.get_commands_since(since, limit=100)
+        total = len(cmds)
+        success = sum(1 for c in cmds if c["success"])
+
+        ok_services, services = self.executor._handle_check_services({})
+        ok_disk, disk = self.executor._handle_disk_usage({})
+
+        command_lines = []
+        for c in cmds[:10]:
+            status = "✅" if c["success"] else "❌"
+            command_lines.append(f"{status} {c['type']}: {str(c['text'])[:80]}")
+        if not command_lines:
+            command_lines.append("Команд не было")
+
+        return (
+            "☀️ Daily Digest\n"
+            f"Период: последние 24 часа\n\n"
+            f"📌 Команды: {total} (✅ {success}, ❌ {total - success})\n"
+            + "\n".join(command_lines)
+            + "\n\n"
+            + (services if ok_services else f"❌ Статус сервисов: {services}")
+            + "\n\n"
+            + (disk if ok_disk else f"❌ Диск: {disk}")
+        )
 
     # ── Media ──
 
@@ -622,10 +679,57 @@ class Geek26Bot:
                 ocr_text = r.stdout.strip()[:2000]
                 # Feed into chat history so subsequent messages have context
                 self._record_modal_input("photo", ocr_text, chat_id)
-                return f"📷 OCR:\n{ocr_text}"
+                analysis = self._analyze_photo_text(ocr_text)
+                return f"📷 OCR:\n{ocr_text}" + (f"\n\n{analysis}" if analysis else "")
             return "❌ OCR не распознал текст"
         except Exception as e:
             return f"❌ OCR ошибка: {e}"
+
+    def _analyze_photo_text(self, ocr_text: str) -> str:
+        suggestions = []
+        url_match = re.search(r'https?://[^\s]+', ocr_text)
+        if url_match:
+            suggestions.append(f"• URL найден: можно открыть {url_match.group(0)}")
+
+        if re.search(r'\b(error|exception|traceback|failed|ошибка|исключение)\b', ocr_text, re.IGNORECASE):
+            suggestions.append("• Похоже на ошибку: можно эскалировать к Geek")
+
+        parsed = self.parser.parse(ocr_text)
+        if parsed.type != CommandType.NONE and parsed.confidence > 0.5:
+            suggestions.append(f"• Похоже на команду: можно выполнить {parsed.type.value}")
+
+        llm_note = self._photo_llm_analysis(ocr_text)
+        if llm_note:
+            suggestions.append(f"• Gemma: {llm_note[:700]}")
+
+        return "🔎 Анализ:\n" + "\n".join(suggestions) if suggestions else ""
+
+    def _photo_llm_analysis(self, ocr_text: str) -> str:
+        model = "gemma4:e4b"
+        if model not in MODELS:
+            return ""
+        messages = [
+            {"role": "system", "content": "Коротко проанализируй OCR текст. Если есть URL, ошибка или команда для бота, предложи одно действие. Без выполнения."},
+            {"role": "user", "content": ocr_text[:2000]},
+        ]
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "keep_alive": "5m",
+            "think": False,
+            "options": {"num_ctx": 2048},
+        }
+        try:
+            r = requests.post(OLLAMA_CHAT, json=payload, timeout=15)
+            data = r.json()
+            return data.get("message", {}).get("content", "").strip()
+        except requests.Timeout:
+            self.log.info("photo LLM analysis timeout")
+            return ""
+        except Exception as e:
+            self.log.warning("photo LLM analysis failed: %s", e)
+            return ""
 
     def handle_voice(self, file_path: str, chat_id: int) -> str:
         """Transcribe voice. Result is also saved into chat_history for continuity."""
@@ -659,6 +763,7 @@ class Geek26Bot:
             user_line = f"{tag} {content}"
             self.brain.chat_history.append(("user", user_line))
             self.memory.save_message(chat_id, "user", user_line)
+            self._maybe_summarize_memory(chat_id)
         except Exception as e:
             self.log.warning("record_modal_input: %s", e)
 
@@ -670,6 +775,17 @@ class Geek26Bot:
         ollama_ok = self.brain.check_ollama()
         if not ollama_ok:
             self.log.warning("⚠️ Ollama not responding!")
+            try:
+                r = subprocess.run(
+                    ["brew", "services", "restart", "ollama"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if r.returncode == 0:
+                    self.log.info("Watchdog restarted Ollama via brew")
+                else:
+                    self.log.warning("Watchdog Ollama restart failed: %s", (r.stderr or r.stdout).strip())
+            except Exception as e:
+                self.log.warning("Watchdog Ollama restart error: %s", e)
 
         # SQLite
         db_ok = self.memory.is_healthy()
@@ -679,10 +795,31 @@ class Geek26Bot:
         # Disk
         disk = shutil.disk_usage("/")
         disk_pct = (disk.used / disk.total) * 100
-        if disk_pct > DISK_WARNING_PCT:
+        disk_threshold = min(DISK_WARNING_PCT, 90)
+        if disk_pct > disk_threshold:
             self.log.warning("⚠️ Disk %.1f%% full!", disk_pct)
+            self.send_proactive_message(
+                ALLOWED_USER,
+                f"⚠️ Диск заполнен на {disk_pct:.1f}% ({self.executor._format_size(disk.free)} свободно)",
+            )
+
+        self._send_due_reminders()
 
         self.log.info("Watchdog: Ollama=%s DB=%s Disk=%.1f%%", ollama_ok, db_ok, disk_pct)
+
+    def _send_due_reminders(self) -> None:
+        now_iso = datetime.now().isoformat()
+        try:
+            due = self.memory.get_due_reminders(now_iso)
+        except Exception as e:
+            self.log.warning("get_due_reminders failed: %s", e)
+            return
+        for reminder_id, chat_id, text, trigger_at in due:
+            if self.send_proactive_message(chat_id, f"⏰ Напоминание:\n{text}"):
+                try:
+                    self.memory.mark_reminder_sent(reminder_id)
+                except Exception as e:
+                    self.log.warning("mark_reminder_sent(%s): %s", reminder_id, e)
 
     # ── Main Loop ──
 

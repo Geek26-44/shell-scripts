@@ -17,7 +17,7 @@ from config import (
     CMD_TIMEOUT_DOWNLOAD, CMD_TIMEOUT_FAST, CMD_TIMEOUT_SEARCH,
     BotSettings,
 )
-from brain import CommandType, ParsedCommand
+from brain import CommandParser, CommandType, ParsedCommand
 
 
 class CommandExecutor:
@@ -64,6 +64,9 @@ class CommandExecutor:
             # Feature 2: contextual commands
             CommandType.REPEAT: self._handle_repeat,
             CommandType.CANCEL: self._handle_cancel,
+            CommandType.WEB_SEARCH: self._handle_web_search,
+            CommandType.CHAIN: self._handle_chain,
+            CommandType.REMIND: self._handle_remind,
         }
 
         self.restartable = {
@@ -348,6 +351,98 @@ class CommandExecutor:
         if ok:
             return True, "🚀 Эскалировано к Geek (OpenClaw)."
         return True, "📋 Слишком сложно для меня. Напиши Geek через OpenClaw."
+
+    def _handle_web_search(self, p: Dict) -> Tuple[bool, str]:
+        query = p.get("query", "").strip()
+        if not query:
+            return False, "❌ Запрос не указан"
+        try:
+            r = subprocess.run(
+                ["gemini", "-p", query],
+                capture_output=True, text=True, timeout=30,
+            )
+        except FileNotFoundError:
+            return False, "❌ Gemini CLI не найден"
+        if r.returncode != 0:
+            return False, (r.stderr.strip() or f"❌ Gemini exit code {r.returncode}")[:2000]
+        out = (r.stdout or "").strip()
+        return True, f"🌐 Web Search:\n{out[:2000] if out else 'Пустой ответ'}"
+
+    def _handle_chain(self, p: Dict) -> Tuple[bool, str]:
+        steps = [str(s).strip() for s in p.get("steps", []) if str(s).strip()][:3]
+        if len(steps) < 2:
+            return False, "❌ Цепочка должна содержать минимум 2 шага"
+
+        parser = CommandParser(self.memory)
+        prev_ok = True
+        prev_msg = ""
+        results = []
+        overall_ok = True
+
+        for idx, step in enumerate(steps, start=1):
+            if idx > 1 and self._chain_step_should_skip(step, prev_msg):
+                results.append(f"{idx}. ⏭️ Пропустил: условие не сработало")
+                continue
+
+            cmd = parser.parse(step)
+            if cmd.type == CommandType.CHAIN:
+                return False, "❌ Вложенные цепочки не поддерживаются"
+            cmd.params["chain_context"] = prev_msg
+
+            if cmd.type == CommandType.RESTART_SERVICE and not cmd.params.get("service"):
+                svc = self._infer_failed_service(prev_msg)
+                if svc:
+                    cmd.params["service"] = svc
+
+            handler = self.handlers.get(cmd.type)
+            if not handler or cmd.type == CommandType.NONE:
+                prev_ok, prev_msg = False, f"❓ Не понял шаг: {step}"
+            else:
+                try:
+                    prev_ok, prev_msg = handler(cmd.params)
+                except subprocess.TimeoutExpired:
+                    prev_ok, prev_msg = False, "⏱️ Шаг превысил таймаут"
+                except Exception as e:
+                    prev_ok, prev_msg = False, f"❌ Шаг: {e}"
+
+            overall_ok = overall_ok and prev_ok
+            marker = "✅" if prev_ok else "❌"
+            results.append(f"{idx}. {marker} {cmd.type.value}: {prev_msg[:600]}")
+
+        return overall_ok, "🔗 Цепочка:\n" + "\n".join(results)
+
+    def _chain_step_should_skip(self, step: str, prev_msg: str) -> bool:
+        lower = step.lower()
+        conditional = any(word in lower for word in ["если", "if", "упало", "failed", "down"])
+        if not conditional:
+            return False
+        bad_markers = ["❌", "not responding", "unhealthy", "failed", "down"]
+        return not any(marker.lower() in prev_msg.lower() for marker in bad_markers)
+
+    def _infer_failed_service(self, prev_msg: str) -> str:
+        for line in prev_msg.splitlines():
+            lower = line.lower()
+            if "❌" not in lower:
+                continue
+            for svc in ("ollama", "postgres", "postgresql"):
+                if svc in lower:
+                    return "postgres" if svc == "postgresql" else svc
+        return ""
+
+    def _handle_remind(self, p: Dict) -> Tuple[bool, str]:
+        if not self.memory:
+            return False, "❌ SQLite недоступен"
+        chat_id = p.get("chat_id")
+        text = p.get("text", "").strip()
+        trigger_at = p.get("trigger_at", "").strip()
+        if not chat_id:
+            return False, "❌ chat_id не указан"
+        if not text:
+            return False, "❌ Текст напоминания не указан"
+        if not trigger_at:
+            return False, "❌ Не понял время. Пример: напомни через 2 часа купить молоко"
+        reminder_id = self.memory.add_reminder(int(chat_id), text, trigger_at)
+        return True, f"⏰ Напомню: {text}\nID: {reminder_id}\nКогда: {trigger_at}"
 
     # ── Feature 2: contextual commands ──
 
