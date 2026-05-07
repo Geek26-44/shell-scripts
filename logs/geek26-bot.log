@@ -1,0 +1,218 @@
+[2026-05-06 14:15:54] Loaded 4 messages from SQLite
+[2026-05-06 14:15:54] 🤖 Geek26 Bot v3 started
+[2026-05-06 14:15:54]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 14:15:54]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 14:15:54]    Watchdog: every 60 iterations
+[2026-05-06 14:29:36] Q: Напиши какая у тебя сейчас структура и что ты умеешь ?
+[2026-05-06 14:29:45] Received signal 15 — shutting down gracefully
+[2026-05-06 14:30:08] Model qwen3.5:9b error (attempt 1/3): ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+[2026-05-06 14:30:08] Model qwen3.5:9b error (attempt 1/3): ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+[2026-05-06 14:30:48]   Qwen 3.5 9B: 8.9 tok/s, 644 chars
+[2026-05-06 14:31:19]   Qwen 3.5 9B: 9.8 tok/s, 803 chars
+[2026-05-06 14:31:57]   Gemma 4 E4B: 20.7 tok/s, 1444 chars
+[2026-05-06 14:31:58] Q: +
+[2026-05-06 14:32:24]   Qwen 3.5 9B: 3.6 tok/s, 93 chars
+[2026-05-06 14:32:47] Received signal 15 — shutting down gracefully
+[2026-05-06 14:32:50]   Gemma 4 E4B: 6.3 tok/s, 168 chars
+[2026-05-06 14:33:02] Received signal 15 — shutting down gracefully
+[2026-05-06 14:33:05] Received signal 15 — shutting down gracefully
+[2026-05-06 14:33:12] Loaded 8 messages from SQLite
+[2026-05-06 14:33:12] 🤖 Geek26 Bot v3 started
+[2026-05-06 14:33:12]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 14:33:12]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 14:33:12]    Watchdog: every 60 iterations
+[2026-05-06 14:33:13] Q: Напиши какая у тебя сейчас структура и что ты умеешь ?
+[2026-05-06 14:33:48]   Qwen 3.5 9B: 15.4 tok/s, 543 chars
+[2026-05-06 14:34:30]   Gemma 4 E4B: 42.7 tok/s, 1804 chars
+[2026-05-06 14:34:31] Q: +
+[2026-05-06 14:35:05]   Qwen 3.5 9B: 4.2 tok/s, 144 chars
+[2026-05-06 14:35:30]   Gemma 4 E4B: 11.7 tok/s, 303 chars
+[2026-05-06 14:37:17] Q: У нас есть с тобой еще один бот и он почему то начал отвечать на запросы вот таким образом что это м
+[2026-05-06 14:38:03]   Qwen 3.5 9B: 12.4 tok/s, 583 chars
+[2026-05-06 14:38:38]   Gemma 4 E4B: 23.2 tok/s, 790 chars
+[2026-05-06 14:44:40] Received signal 15 — shutting down gracefully
+[2026-05-06 14:44:42] Received signal 15 — shutting down gracefully
+[2026-05-06 14:44:43] 🛑 Geek26 Bot stopped cleanly
+[2026-05-06 14:44:44] Loaded 14 messages from SQLite
+[2026-05-06 14:44:44] 🤖 Geek26 Bot v3 started
+[2026-05-06 14:44:44]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 14:44:44]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 14:44:44]    Watchdog: every 60 iterations
+[2026-05-06 14:57:45] Q: Умный ты теперь или нет ?
+[2026-05-06 14:57:45] Complexity: simple | 'Умный ты теперь или нет ?'
+[2026-05-06 14:57:45] RAG search error: [Errno 2] No such file or directory: 'rg'
+[2026-05-06 14:58:28]   Qwen 3.5 9B: 10.3 tok/s, 447 chars
+[2026-05-06 14:58:28] RAG search error: [Errno 2] No such file or directory: 'rg'
+[2026-05-06 14:59:05] Received signal 15 — shutting down gracefully
+[2026-05-06 14:59:07] Received signal 15 — shutting down gracefully
+[2026-05-06 14:59:08]   Gemma 4 E4B: 11.9 tok/s, 473 chars
+[2026-05-06 14:59:09] 🛑 Geek26 Bot stopped cleanly
+[2026-05-06 14:59:10] Loaded 16 messages from SQLite
+[2026-05-06 14:59:10] 🤖 Geek26 Bot v3 started
+[2026-05-06 14:59:10]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 14:59:10]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 14:59:10]    Watchdog: every 60 iterations
+[2026-05-06 14:59:11] Q: Умный ты теперь или нет ?
+[2026-05-06 14:59:11] Complexity: simple | 'Умный ты теперь или нет ?'
+[2026-05-06 15:01:05]   Qwen 3.5 9B: 3.1 tok/s, 359 chars
+[2026-05-06 15:01:41]   Gemma 4 E4B: 16.2 tok/s, 579 chars
+[2026-05-06 15:19:35] Q: 1. привет
+2. что ты умеешь?
+3. объясни чем отличается Qwen от Gemma
+4. проверь сервисы
+5. покажи ком
+[2026-05-06 15:25:18] Received signal 15 — shutting down gracefully
+[2026-05-06 15:25:26] Loaded 20 messages from SQLite
+[2026-05-06 15:25:26] 🤖 Geek26 Bot v3 started
+[2026-05-06 15:25:26]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 15:25:26]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 15:25:26]    Watchdog: every 60 iterations
+[2026-05-06 15:25:28] Received signal 15 — shutting down gracefully
+[2026-05-06 15:25:34] Loaded 20 messages from SQLite
+[2026-05-06 15:25:34] 🤖 Geek26 Bot v3 started
+[2026-05-06 15:25:34]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 15:25:34]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 15:25:34]    Watchdog: every 60 iterations
+[2026-05-06 15:29:53] Loaded 20 messages from SQLite
+[2026-05-06 15:29:53] 🤖 Geek26 Bot v3 started
+[2026-05-06 15:29:53]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 15:29:53]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 15:29:53]    Watchdog: every 60 iterations
+[2026-05-06 15:29:55] Received signal 15 — shutting down gracefully
+[2026-05-06 15:30:01] Loaded 20 messages from SQLite
+[2026-05-06 15:30:01] 🤖 Geek26 Bot v3 started
+[2026-05-06 15:30:01]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 15:30:01]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 15:30:01]    Watchdog: every 60 iterations
+[2026-05-06 15:45:24] Q: 1. привет
+2. что ты умеешь?
+3. объясни чем отличается Qwen от Gemma
+4. проверь сервисы
+5. покажи ком
+[2026-05-06 15:45:24] Batch detected: 12 items
+[2026-05-06 15:45:24] Batch [1/12]: привет
+[2026-05-06 15:45:24] Complexity: trivial | 'привет'
+[2026-05-06 15:45:48] Model qwen3.5:9b error (attempt 1/3): ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+[2026-05-06 15:47:50] Model qwen3.5:9b timeout (attempt 2/3)
+[2026-05-06 15:48:31]   Qwen 3.5 9B: 0.1 tok/s, 19 chars
+[2026-05-06 15:48:32] Batch [2/12]: что ты умеешь?
+[2026-05-06 15:48:32] Complexity: simple | 'что ты умеешь?'
+[2026-05-06 15:50:32] Model qwen3.5:9b timeout (attempt 1/3)
+[2026-05-06 15:51:12] Model qwen3.5:9b error (attempt 2/3): ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+[2026-05-06 15:53:17] Model qwen3.5:9b timeout (attempt 3/3)
+[2026-05-06 15:53:17]   Qwen 3.5 9B: FAILED
+[2026-05-06 15:53:59]   Gemma 4 E4B: 28.3 tok/s, 1190 chars
+[2026-05-06 15:54:01] Batch [3/12]: объясни чем отличается Qwen от Gemma
+[2026-05-06 15:54:01] Complexity: complex | 'объясни чем отличается Qwen от Gemma'
+[2026-05-06 15:54:54]   Qwen 3.5 9B: 13.8 tok/s, 731 chars
+[2026-05-06 15:55:39]   Gemma 4 E4B: 29.5 tok/s, 1337 chars
+[2026-05-06 15:55:41] Batch [4/12]: проверь сервисы
+[2026-05-06 15:55:42] Batch [5/12]: покажи коммиты shell-scripts
+[2026-05-06 15:56:44] Batch [6/12]: статус shell-scripts
+[2026-05-06 15:56:45] Batch [7/12]: найди в заметках Infrastructure
+[2026-05-06 15:56:47] Batch [8/12]: запиши в обсидиан: тестовая заметка от бота v3.1
+[2026-05-06 15:56:48] Batch [9/12]: скопируй в буфер: Geek26 v3.1 работает
+[2026-05-06 15:56:50] Batch [10/12]: открой https://github.com/Geek26-44/shell-scripts
+[2026-05-06 15:56:51] Batch [11/12]: как связаны Ollama и Gemma
+[2026-05-06 15:56:53] Batch [12/12]: спланируй разработку мобильного приложения нужно отвечать на
+[2026-05-06 16:15:38] Watchdog: Ollama=True DB=True Disk=64.2%
+[2026-05-06 16:18:14] Loaded 20 messages from SQLite
+[2026-05-06 16:18:14] 🤖 Geek26 Bot v3 started
+[2026-05-06 16:18:14]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 16:18:14]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 16:18:14]    Watchdog: every 60 iterations
+[2026-05-06 16:18:16] Received signal 15 — shutting down gracefully
+[2026-05-06 16:18:22] Loaded 20 messages from SQLite
+[2026-05-06 16:18:22] 🤖 Geek26 Bot v3 started
+[2026-05-06 16:18:22]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 16:18:22]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 16:18:22]    Watchdog: every 60 iterations
+[2026-05-06 16:49:46] Watchdog: Ollama=True DB=True Disk=64.3%
+[2026-05-06 17:21:10] Watchdog: Ollama=True DB=True Disk=64.2%
+[2026-05-06 17:53:38] Watchdog: Ollama=True DB=True Disk=64.3%
+[2026-05-06 18:26:03] Watchdog: Ollama=True DB=True Disk=64.3%
+[2026-05-06 18:56:27] Watchdog: Ollama=True DB=True Disk=64.3%
+[2026-05-06 19:27:56] Watchdog: Ollama=True DB=True Disk=64.3%
+[2026-05-06 19:43:52] Loaded 20 messages from SQLite
+[2026-05-06 19:43:52] 🤖 Geek26 Bot v3 started
+[2026-05-06 19:43:52]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 19:43:52]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 19:43:52]    Watchdog: every 60 iterations
+[2026-05-06 19:43:54] Received signal 15 — shutting down gracefully
+[2026-05-06 19:44:00] Loaded 20 messages from SQLite
+[2026-05-06 19:44:00] 🤖 Geek26 Bot v3 started
+[2026-05-06 19:44:00]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 19:44:00]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 19:44:00]    Watchdog: every 60 iterations
+[2026-05-06 20:18:54] Watchdog: Ollama=True DB=True Disk=64.3%
+[2026-05-06 20:50:19] Watchdog: Ollama=True DB=True Disk=64.3%
+[2026-05-06 21:14:51] Loaded 20 messages from SQLite
+[2026-05-06 21:14:51] 🤖 Geek26 Bot v3 started
+[2026-05-06 21:14:51]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 21:14:51]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 21:14:51]    Watchdog: every 60 iterations
+[2026-05-06 21:14:53] Received signal 15 — shutting down gracefully
+[2026-05-06 21:14:59] Loaded 20 messages from SQLite
+[2026-05-06 21:14:59] 🤖 Geek26 Bot v3 started
+[2026-05-06 21:14:59]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 21:14:59]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 21:14:59]    Watchdog: every 60 iterations
+[2026-05-06 21:40:59] Loaded 20 messages from SQLite
+[2026-05-06 21:40:59] Restored last_command: disk_usage
+[2026-05-06 21:40:59] 🤖 Geek26 Bot v3 started
+[2026-05-06 21:40:59]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 21:40:59]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 21:40:59]    Watchdog: every 60 iterations
+[2026-05-06 21:41:01] Received signal 15 — shutting down gracefully
+[2026-05-06 21:41:07] Loaded 20 messages from SQLite
+[2026-05-06 21:41:07] Restored last_command: disk_usage
+[2026-05-06 21:41:07] 🤖 Geek26 Bot v3 started
+[2026-05-06 21:41:07]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 21:41:07]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 21:41:07]    Watchdog: every 60 iterations
+[2026-05-06 21:41:27] Warm qwen3.5:9b skipped: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=20)
+[2026-05-06 21:41:47] Warm gemma4:e4b skipped: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=20)
+[2026-05-06 22:14:35] Watchdog: Ollama=True DB=True Disk=64.8%
+[2026-05-06 22:49:59] Watchdog: Ollama=True DB=True Disk=65.2%
+[2026-05-06 22:55:13] Loaded 20 messages from SQLite
+[2026-05-06 22:55:13] Restored last_command: remind
+[2026-05-06 22:55:13] 🤖 Geek26 Bot v3 started
+[2026-05-06 22:55:13]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 22:55:13]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 22:55:13]    Watchdog: every 60 iterations
+[2026-05-06 22:55:15] Received signal 15 — shutting down gracefully
+[2026-05-06 22:55:21] Loaded 20 messages from SQLite
+[2026-05-06 22:55:21] Restored last_command: remind
+[2026-05-06 22:55:21] 🤖 Geek26 Bot v3 started
+[2026-05-06 22:55:21]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 22:55:21]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 22:55:21]    Watchdog: every 60 iterations
+[2026-05-06 22:55:32] Warmed: Qwen 3.5 9B
+[2026-05-06 22:55:52] Warm gemma4:e4b skipped: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=20)
+[2026-05-06 23:02:57] Q: нв каком уровне ?
+[2026-05-06 23:02:57] Complexity (stream): simple | 'нв каком уровне ?'
+[2026-05-06 23:03:15] Stream done: Qwen 3.5 9B, 17.2s, 170 chars (~10 tok/s)
+[2026-05-06 23:03:26] Auto-saved 4 fact(s) from response
+[2026-05-06 23:03:26] Model gemma4:e4b error (1/3): ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+[2026-05-06 23:03:43] Model gemma4:e4b timeout (2/3)
+[2026-05-06 23:04:03] Model gemma4:e4b timeout (3/3)
+[2026-05-06 23:09:41] Loaded 20 messages from SQLite
+[2026-05-06 23:09:41] Restored last_command: git_log
+[2026-05-06 23:09:41] 🤖 Geek26 Bot v3 started
+[2026-05-06 23:09:41]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 23:09:41]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 23:09:41]    Watchdog: every 60 iterations
+[2026-05-06 23:09:43] Received signal 15 — shutting down gracefully
+[2026-05-06 23:09:49] Loaded 20 messages from SQLite
+[2026-05-06 23:09:49] Restored last_command: git_log
+[2026-05-06 23:09:49] 🤖 Geek26 Bot v3 started
+[2026-05-06 23:09:49]    Models: qwen3.5:9b, gemma4:e4b
+[2026-05-06 23:09:49]    DB: /Users/geek2026/github/shell-scripts/geek26/geek26.db
+[2026-05-06 23:09:49]    Watchdog: every 60 iterations
+[2026-05-06 23:10:09] Warm qwen3.5:9b skipped: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=20)
+[2026-05-06 23:10:28] Warmed: Gemma 4 E4B
+[2026-05-06 23:43:14] Watchdog: Ollama=True DB=True Disk=65.2%
+[2026-05-07 00:17:39] Watchdog: Ollama=True DB=True Disk=64.1%
+[2026-05-07 00:53:04] Watchdog: Ollama=True DB=True Disk=64.2%
+[2026-05-07 01:28:29] Watchdog: Ollama=True DB=True Disk=64.2%
+[2026-05-07 02:01:54] Watchdog: Ollama=True DB=True Disk=64.2%
