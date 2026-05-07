@@ -456,9 +456,40 @@ class Memory:
                 trigger_at TEXT,
                 sent INTEGER DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS experiences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                user_text TEXT,
+                bot_response TEXT,
+                model TEXT,
+                feedback TEXT DEFAULT 'none',
+                correction TEXT,
+                telegram_message_id INTEGER,
+                timestamp TEXT
+            );
+            CREATE TABLE IF NOT EXISTS success_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                raw_text TEXT,
+                command_type TEXT,
+                params TEXT,
+                duration REAL,
+                timestamp TEXT
+            );
+            CREATE TABLE IF NOT EXISTS model_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model TEXT,
+                command_type TEXT,
+                avg_score REAL,
+                count INTEGER,
+                updated_at TEXT,
+                UNIQUE(model, command_type)
+            );
             CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, id);
             CREATE INDEX IF NOT EXISTS idx_facts_topic ON facts(topic);
             CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(sent, trigger_at);
+            CREATE INDEX IF NOT EXISTS idx_experiences_msg ON experiences(telegram_message_id);
+            CREATE INDEX IF NOT EXISTS idx_success_patterns_type ON success_patterns(command_type, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_model_scores_lookup ON model_scores(model, command_type);
         """)
         self._conn.commit()
 
@@ -486,7 +517,143 @@ class Memory:
             "INSERT INTO commands (raw_text, command_type, params, success, duration, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
             (raw_text, cmd_type, params, int(success), duration, datetime.now().isoformat()),
         )
+        if success and cmd_type not in ("repeat", "cancel", "none"):
+            self._conn.execute(
+                "INSERT INTO success_patterns (raw_text, command_type, params, duration, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (raw_text, cmd_type, params, duration, datetime.now().isoformat()),
+            )
         self._conn.commit()
+
+    def save_experience(self, chat_id: int, user_text: str, bot_response: str,
+                        model: str, feedback: str = "none",
+                        telegram_message_id: Optional[int] = None) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO experiences "
+            "(chat_id, user_text, bot_response, model, feedback, correction, telegram_message_id, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+            (chat_id, user_text, bot_response, model, feedback, telegram_message_id, datetime.now().isoformat()),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def set_experience_message_id(self, exp_id: int, message_id: int) -> None:
+        self._conn.execute(
+            "UPDATE experiences SET telegram_message_id = ? WHERE id = ?",
+            (message_id, exp_id),
+        )
+        self._conn.commit()
+
+    def get_experience(self, exp_id: int) -> Optional[Dict[str, Any]]:
+        row = self._conn.execute(
+            "SELECT id, chat_id, user_text, bot_response, model, feedback, correction, telegram_message_id "
+            "FROM experiences WHERE id = ?",
+            (exp_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0], "chat_id": row[1], "user_text": row[2],
+            "bot_response": row[3], "model": row[4], "feedback": row[5],
+            "correction": row[6], "telegram_message_id": row[7],
+        }
+
+    def get_experience_by_message_id(self, message_id: int) -> Optional[Dict[str, Any]]:
+        row = self._conn.execute(
+            "SELECT id FROM experiences WHERE telegram_message_id = ? ORDER BY id DESC LIMIT 1",
+            (message_id,),
+        ).fetchone()
+        return self.get_experience(int(row[0])) if row else None
+
+    def update_experience_feedback(self, exp_id: int, feedback: str,
+                                   correction: Optional[str] = None) -> None:
+        if correction is None:
+            self._conn.execute(
+                "UPDATE experiences SET feedback = ? WHERE id = ?",
+                (feedback, exp_id),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE experiences SET feedback = ?, correction = ? WHERE id = ?",
+                (feedback, correction, exp_id),
+            )
+        self._conn.commit()
+
+    def get_last_negative_experience(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        row = self._conn.execute(
+            "SELECT id FROM experiences WHERE chat_id = ? AND feedback = 'negative' "
+            "ORDER BY id DESC LIMIT 1",
+            (chat_id,),
+        ).fetchone()
+        return self.get_experience(int(row[0])) if row else None
+
+    def get_preferences(self, limit: int = 5) -> List[Tuple[str, str]]:
+        pos = self._conn.execute(
+            "SELECT user_text, bot_response FROM experiences "
+            "WHERE feedback = 'positive' ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        neg = self._conn.execute(
+            "SELECT user_text, correction FROM experiences "
+            "WHERE feedback = 'negative' AND correction IS NOT NULL AND TRIM(correction) != '' "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        prefs: List[Tuple[str, str]] = []
+        prefs.extend(("positive", f"{r[0][:120]} -> {r[1][:240]}") for r in pos)
+        prefs.extend(("negative", f"{r[0][:120]} -> {r[1][:240]}") for r in neg)
+        return prefs
+
+    def detect_recurring(self, raw_text: str, cmd_type: str, params: str) -> Optional[str]:
+        since = (datetime.now() - timedelta(days=7)).isoformat()
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM success_patterns "
+            "WHERE command_type = ? AND params = ? AND timestamp >= ?",
+            (cmd_type, params, since),
+        ).fetchone()
+        if row and int(row[0]) >= 3:
+            return self._shortcut_for(cmd_type)
+        return None
+
+    def _shortcut_for(self, cmd_type: str) -> str:
+        shortcuts = {
+            "git_log": "/commits",
+            "git_status": "/status",
+            "check_services": "/services",
+            "disk_usage": "/disk",
+            "memory_status": "/memory",
+            "show_processes": "/processes",
+        }
+        return shortcuts.get(cmd_type, f"/{cmd_type.replace('_', '-')}")
+
+    def update_model_score(self, model: str, command_type: str, score_delta: float) -> None:
+        now = datetime.now().isoformat()
+        row = self._conn.execute(
+            "SELECT avg_score, count FROM model_scores WHERE model = ? AND command_type = ?",
+            (model, command_type),
+        ).fetchone()
+        if row:
+            avg, count = float(row[0]), int(row[1])
+            new_count = count + 1
+            new_avg = ((avg * count) + score_delta) / new_count
+            self._conn.execute(
+                "UPDATE model_scores SET avg_score = ?, count = ?, updated_at = ? "
+                "WHERE model = ? AND command_type = ?",
+                (new_avg, new_count, now, model, command_type),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO model_scores (model, command_type, avg_score, count, updated_at) "
+                "VALUES (?, ?, ?, 1, ?)",
+                (model, command_type, score_delta, now),
+            )
+        self._conn.commit()
+
+    def get_model_score(self, model: str, command_type: str) -> float:
+        row = self._conn.execute(
+            "SELECT avg_score FROM model_scores WHERE model = ? AND command_type = ?",
+            (model, command_type),
+        ).fetchone()
+        return float(row[0]) if row else 0.0
 
     def get_recent_commands(self, limit: int = 20) -> List[Dict]:
         rows = self._conn.execute(
@@ -675,6 +842,7 @@ def build_system_prompt(
     recent_commands: Optional[List[Dict]] = None,
     facts: Optional[List[str]] = None,
     memory_recall: Optional[str] = None,
+    preferences: Optional[List[Tuple[str, str]]] = None,
 ) -> str:
     """Dynamic system prompt with context injection."""
 
@@ -729,6 +897,14 @@ def build_system_prompt(
             lines.append(f"- {status} {cmd['text'][:60]}")
         if lines:
             prompt += "\n\n## Недавние команды\n" + "\n".join(lines)
+
+    if preferences:
+        liked = [content for kind, content in preferences if kind == "positive"][:5]
+        avoided = [content for kind, content in preferences if kind == "negative"][:5]
+        if liked:
+            prompt += "\n\n## Что нравится Диме\n" + "\n".join(f"- {p}" for p in liked)
+        if avoided:
+            prompt += "\n\n## Чего избегать\n" + "\n".join(f"- {p}" for p in avoided)
 
     return prompt
 
@@ -787,6 +963,9 @@ class OllamaBrain:
             name: {"wins": 0, "total": 0}
             for name in MODELS
         }
+        self.last_model: str = ""
+        self.last_command_type: str = ""
+        self.last_speed: float = 0.0
 
     def load_context(self, chat_id: int) -> None:
         rows = self.memory.load_context(chat_id)
@@ -936,6 +1115,7 @@ class OllamaBrain:
         recent_cmds = None
         facts = None
         memory_recall = None
+        preferences = None
 
         if complexity in ("complex", "simple"):
             # RAG from Obsidian
@@ -947,6 +1127,7 @@ class OllamaBrain:
             facts = self.memory.search_facts(user_text, limit=3)
 
             recent_cmds = self.memory.get_recent_commands(5)
+            preferences = self.memory.get_preferences(5)
 
         # Memory recall: last few messages for continuity
         if len(self.chat_history) > 2:
@@ -954,7 +1135,7 @@ class OllamaBrain:
             recall_lines = [f"{'👤' if r == 'user' else '🤖'}: {c[:80]}" for r, c in last_msgs]
             memory_recall = "\n".join(recall_lines)
 
-        system = build_system_prompt(rag_context, recent_cmds, facts, memory_recall)
+        system = build_system_prompt(rag_context, recent_cmds, facts, memory_recall, preferences)
 
         messages = [{"role": "system", "content": system}]
         for role, content in self.chat_history:
@@ -971,6 +1152,7 @@ class OllamaBrain:
 
         if resp:
             speed = len(resp) / elapsed if elapsed > 0 else 0
+            self.memory.update_model_score(model, complexity, min(10.0, speed / 10.0))
             self.log.info("  %s: %.1f tok/s, %d chars", MODELS[model]["short"], speed, len(resp))
             return resp, speed
         return None, 0
@@ -991,6 +1173,9 @@ class OllamaBrain:
 
         best_name = max(valid, key=lambda k: self._score(user_text, valid[k][0], valid[k][1], k))
         best_resp = valid[best_name][0]
+        self.last_model = best_name
+        self.last_command_type = complexity
+        self.last_speed = valid[best_name][1]
 
         for mn in valid:
             self.model_stats[mn]["total"] += 1
@@ -1035,6 +1220,9 @@ class OllamaBrain:
             win_rate = stats["wins"] / stats["total"]
             if win_rate > 0.6:
                 score += 5
+        learned = self.memory.get_model_score(model, self.router.classify(question))
+        if learned:
+            score += max(-10.0, min(10.0, learned))
         return min(100, score)
 
     def process_chat(self, text: str) -> str:
@@ -1046,6 +1234,9 @@ class OllamaBrain:
             for model_name in MODELS:
                 resp, speed = self.query_single(model_name, text, "trivial")
                 if resp:
+                    self.last_model = model_name
+                    self.last_command_type = "trivial"
+                    self.last_speed = speed
                     self.chat_history.append(("user", text))
                     self.chat_history.append(("assistant", resp))
                     # Feature 3: auto-extract facts (gated + async)
@@ -1099,6 +1290,10 @@ class OllamaBrain:
             return "⚠️ Модель недоступна. Попробуй через минуту."
 
         speed = len(full) / elapsed if elapsed > 0 else 0
+        self.last_model = model_name
+        self.last_command_type = complexity
+        self.last_speed = speed
+        self.memory.update_model_score(model_name, complexity, min(10.0, speed / 10.0))
         self.log.info("Stream done: %s, %.1fs, %d chars (~%.0f tok/s)",
                       MODELS[model_name]["short"], elapsed, len(full), speed)
 
@@ -1109,6 +1304,93 @@ class OllamaBrain:
         self._maybe_auto_save_facts_async(full, complexity)
 
         return full
+
+    def learn_from_correction(self, original_text: str, correction_text: str,
+                              parser: Optional[CommandParser] = None) -> Optional[Tuple[str, str]]:
+        """
+        Learn a keyword -> command mapping from a user correction.
+        Returns (keyword, command_type) when a pattern was learned.
+        """
+        target_parser = parser or CommandParser(self.memory)
+        corrected = target_parser.parse(correction_text)
+        if corrected.type == CommandType.NONE:
+            corrected = CommandParser(self.memory).parse(correction_text)
+        if corrected.type == CommandType.NONE:
+            return None
+
+        model = "gemma4:e4b" if "gemma4:e4b" in MODELS else list(MODELS.keys())[0]
+        messages = [
+            {
+                "role": "system",
+                "content": "Отвечай одним словом, без пояснений.",
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Пользователь сказал {original_text!r}, бот не понял. "
+                    f"Правильная команда: {correction_text!r}. "
+                    "Какое ключевое слово добавить? Ответь одно слово."
+                ),
+            },
+        ]
+        try:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "keep_alive": "5m",
+                "think": False,
+                "options": {"num_ctx": 2048},
+            }
+            r = requests.post(OLLAMA_CHAT, json=payload, timeout=15)
+            data = r.json()
+            keyword = data.get("message", {}).get("content", "").strip().lower()
+        except requests.Timeout:
+            self.log.info("learn_from_correction: timeout")
+            return None
+        except Exception as e:
+            self.log.warning("learn_from_correction: %s", e)
+            return None
+
+        keyword = re.sub(r'^[\W_]+|[\W_]+$', '', keyword, flags=re.UNICODE)
+        keyword = keyword.split()[0] if keyword else ""
+        if not keyword or len(keyword) > 40:
+            return None
+        target_parser.learn_pattern(keyword, corrected.type)
+        return keyword, corrected.type.value
+
+    def extract_topic(self, text: str) -> str:
+        """Extract a one-word conversation topic via the fast helper model."""
+        if not text or len(text.strip()) < 8:
+            return ""
+        model = "gemma4:e4b" if "gemma4:e4b" in MODELS else list(MODELS.keys())[0]
+        messages = [
+            {"role": "system", "content": "Назови тему сообщения одним словом. Без пояснений."},
+            {"role": "user", "content": text[:1000]},
+        ]
+        try:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "keep_alive": "5m",
+                "think": False,
+                "options": {"num_ctx": 1024},
+            }
+            r = requests.post(OLLAMA_CHAT, json=payload, timeout=10)
+            data = r.json()
+            topic = data.get("message", {}).get("content", "").strip().lower()
+        except requests.Timeout:
+            self.log.info("extract_topic: timeout")
+            return ""
+        except Exception as e:
+            self.log.warning("extract_topic: %s", e)
+            return ""
+        topic = re.sub(r'^[\W_]+|[\W_]+$', '', topic, flags=re.UNICODE)
+        topic = topic.split()[0] if topic else ""
+        if len(topic) < 2 or len(topic) > 50:
+            return ""
+        return topic
 
     def get_llm_hint(self, text: str) -> Optional[str]:
         messages = [

@@ -149,6 +149,31 @@ def send_message(chat_id: int, text: str, parse_mode: Optional[str] = "HTML") ->
     return ok
 
 
+def send_message_result(chat_id: int, text: str,
+                        parse_mode: Optional[str] = "HTML") -> Optional[int]:
+    """Send one Telegram message and return message_id. Long messages fall back to send_message()."""
+    if not text:
+        return None
+    if len(text) > TG_MAX_LEN:
+        last_id = None
+        for i in range(0, len(text), TG_MAX_LEN):
+            last_id = send_message_result(chat_id, text[i:i + TG_MAX_LEN], parse_mode=parse_mode)
+            time.sleep(0.5)
+        return last_id
+    body = _to_html(text) if parse_mode == "HTML" else text
+    kwargs = {"chat_id": chat_id, "text": body}
+    if parse_mode:
+        kwargs["parse_mode"] = parse_mode
+    r = tg("sendMessage", **kwargs)
+    if r.get("ok"):
+        return r.get("result", {}).get("message_id")
+    if parse_mode:
+        r2 = tg("sendMessage", chat_id=chat_id, text=text)
+        if r2.get("ok"):
+            return r2.get("result", {}).get("message_id")
+    return None
+
+
 def edit_message(chat_id: int, message_id: int, text: str,
                  parse_mode: Optional[str] = "HTML") -> bool:
     """
@@ -178,6 +203,31 @@ def edit_message(chat_id: int, message_id: int, text: str,
         return False
     except Exception:
         return False
+    except Exception:
+        return False
+
+
+def edit_message_reply_markup(chat_id: int, message_id: int, reply_markup: dict) -> bool:
+    try:
+        r = tg(
+            "editMessageReplyMarkup",
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=reply_markup,
+        )
+        return r.get("ok", False)
+    except Exception:
+        return False
+
+
+def answer_callback(callback_id: str, text: str = "") -> None:
+    try:
+        kwargs = {"callback_query_id": callback_id}
+        if text:
+            kwargs["text"] = text
+        tg("answerCallbackQuery", **kwargs)
+    except Exception:
+        pass
 
 
 def send_file(chat_id: int, file_path: str, caption: str = "") -> bool:
@@ -280,6 +330,12 @@ class Geek26Bot:
         self.consecutive_errors = 0
         # chat_id -> (ParsedCommand, expires_at_epoch)
         self.pending_confirm: dict = {}
+        # chat_id -> experience_id awaiting a textual correction after 👎.
+        self.pending_corrections: dict = {}
+        # Filled by process_message(show_thinking=False) when caller must send
+        # the LLM response itself and then attach feedback buttons.
+        self._pending_llm_feedback: Optional[dict] = None
+        self.current_topic: Optional[str] = None
         # Feature 2: last successful (non-REPEAT/CANCEL) command, for "повтори"/"отмени"
         self.last_command: Optional[ParsedCommand] = None
         self.running = True
@@ -367,6 +423,24 @@ class Geek26Bot:
         # protects against accidental log dumps.
         if len(text) > USER_TEXT_MAX_LEN:
             text = text[:USER_TEXT_MAX_LEN] + "\n[…обрезано]"
+
+        pending_exp = self.pending_corrections.pop(chat_id, None)
+        if pending_exp is not None:
+            learned = self._save_feedback_correction(pending_exp, text)
+            if learned:
+                keyword, cmd_type = learned
+                return f"Запомнил correction. Паттерн: {keyword} → {cmd_type}"
+            return "Запомнил correction."
+
+        correction = self._parse_inline_correction(text)
+        if correction:
+            exp = self.memory.get_last_negative_experience(chat_id)
+            if exp:
+                learned = self._save_feedback_correction(int(exp["id"]), correction)
+                if learned:
+                    keyword, cmd_type = learned
+                    return f"Запомнил correction. Паттерн: {keyword} → {cmd_type}"
+                return "Запомнил correction."
 
         # ── Slash commands ─────────────────────────────────────────────
         if text.lower() == "/clear":
@@ -496,6 +570,13 @@ class Geek26Bot:
 
             if ok:
                 self.last_command = command
+                shortcut = self.memory.detect_recurring(
+                    command.raw_text,
+                    command.type.value,
+                    json.dumps(command.params, ensure_ascii=False),
+                )
+                if shortcut:
+                    result += f"\n\nХочешь shortcut? {shortcut}"
 
             self._maybe_send_attachment(chat_id)
 
@@ -505,6 +586,7 @@ class Geek26Bot:
             return result
 
         # ── Regular chat (with streaming) ──────────────────────────────
+        self._maybe_record_topic(text)
         self.memory.save_message(chat_id, "user", text)
 
         thinking_msg_id: Optional[int] = None
@@ -540,18 +622,31 @@ class Geek26Bot:
             # Final edit: drop the cursor, render the full reply.
             if result and len(result) <= TG_MAX_LEN:
                 if edit_message(chat_id, thinking_msg_id, result):
+                    self._save_llm_experience(chat_id, text, result, thinking_msg_id)
                     return ""
             # Long reply or final-edit failed → drop placeholder, send normally
             try:
                 tg("deleteMessage", chat_id=chat_id, message_id=thinking_msg_id)
             except Exception:
                 pass
+            self._pending_llm_feedback = {
+                "chat_id": chat_id,
+                "user_text": text,
+                "bot_response": result,
+                "model": self.brain.last_model or "",
+            }
             return result
 
         # No placeholder available (batch mode) — fall through to non-streaming
         result = self.brain.process_chat(text)
         self.memory.save_message(chat_id, "assistant", result)
         self._maybe_summarize_memory(chat_id)
+        self._pending_llm_feedback = {
+            "chat_id": chat_id,
+            "user_text": text,
+            "bot_response": result,
+            "model": self.brain.last_model or "",
+        }
         return result
 
     def send_proactive_message(self, chat_id: int, text: str) -> bool:
@@ -589,6 +684,137 @@ class Geek26Bot:
                 send_file(chat_id, fpath, caption=caption)
         except Exception as e:
             self.log.warning("send attachment failed: %s", e)
+
+    def _feedback_markup(self, message_id: int) -> dict:
+        return {
+            "inline_keyboard": [[
+                {"text": "👍", "callback_data": f"fb:ok:{message_id}"},
+                {"text": "👎", "callback_data": f"fb:bad:{message_id}"},
+            ]]
+        }
+
+    def _save_llm_experience(self, chat_id: int, user_text: str,
+                             bot_response: str, message_id: int,
+                             model: Optional[str] = None) -> None:
+        try:
+            self.memory.save_experience(
+                chat_id,
+                user_text,
+                bot_response,
+                model if model is not None else (self.brain.last_model or ""),
+                "none",
+                telegram_message_id=message_id,
+            )
+            edit_message_reply_markup(chat_id, message_id, self._feedback_markup(message_id))
+        except Exception as e:
+            self.log.warning("save LLM experience failed: %s", e)
+
+    def _send_with_pending_feedback(self, chat_id: int, text: str) -> bool:
+        payload = self._pending_llm_feedback
+        self._pending_llm_feedback = None
+        if not payload or payload.get("chat_id") != chat_id:
+            return send_message(chat_id, text)
+        message_id = send_message_result(chat_id, text)
+        if not message_id:
+            return False
+        self._save_llm_experience(
+            chat_id,
+            payload.get("user_text", ""),
+            payload.get("bot_response", text),
+            message_id,
+            payload.get("model", ""),
+        )
+        return True
+
+    def _parse_inline_correction(self, text: str) -> Optional[str]:
+        match = re.search(
+            r'^\s*(?:нет|не\s+так)[,:\s]+(?:я\s+имел(?:а)?\s+в\s+виду|надо)\s+(.+)$',
+            text,
+            flags=re.IGNORECASE,
+        )
+        return match.group(1).strip() if match else None
+
+    def _save_feedback_correction(self, exp_id: int, correction: str) -> Optional[Tuple[str, str]]:
+        exp = self.memory.get_experience(exp_id)
+        self.memory.update_experience_feedback(exp_id, "negative", correction)
+        if not exp:
+            return None
+        try:
+            learned = self.brain.learn_from_correction(
+                str(exp.get("user_text") or ""),
+                correction,
+                parser=self.parser,
+            )
+            model = str(exp.get("model") or "")
+            if model:
+                command_type = self.brain.router.classify(str(exp.get("user_text") or ""))
+                self.memory.update_model_score(model, command_type, -20.0)
+            return learned
+        except Exception as e:
+            self.log.warning("feedback correction learning failed: %s", e)
+            return None
+
+    def _maybe_record_topic(self, text: str) -> None:
+        try:
+            topic = self.brain.extract_topic(text)
+            if not topic or topic == self.current_topic:
+                return
+            previous = self.current_topic
+            self.current_topic = topic
+            content = f"Мы говорили про {topic}"
+            if previous:
+                content = f"Перешли от темы {previous} к теме {topic}"
+            self.memory.save_fact(f"conversation:{topic}", content)
+        except Exception as e:
+            self.log.warning("topic extraction failed: %s", e)
+
+    def handle_callback(self, callback_query: dict) -> None:
+        callback_id = callback_query.get("id", "")
+        user_id = callback_query.get("from", {}).get("id")
+        if user_id != ALLOWED_USER:
+            answer_callback(callback_id, "Unauthorized")
+            return
+
+        data = callback_query.get("data", "")
+        msg = callback_query.get("message", {})
+        chat_id = msg.get("chat", {}).get("id")
+        if not data.startswith("fb:") or not chat_id:
+            answer_callback(callback_id)
+            return
+
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            answer_callback(callback_id)
+            return
+        action, raw_msg_id = parts[1], parts[2]
+        try:
+            message_id = int(raw_msg_id)
+        except ValueError:
+            answer_callback(callback_id)
+            return
+
+        exp = self.memory.get_experience_by_message_id(message_id)
+        if not exp:
+            answer_callback(callback_id, "Не нашёл experience")
+            return
+
+        exp_id = int(exp["id"])
+        model = str(exp.get("model") or "")
+        command_type = self.brain.router.classify(str(exp.get("user_text") or ""))
+        if action == "ok":
+            self.memory.update_experience_feedback(exp_id, "positive")
+            if model:
+                self.memory.update_model_score(model, command_type, 20.0)
+            answer_callback(callback_id, "Запомнил 👍")
+        elif action == "bad":
+            self.memory.update_experience_feedback(exp_id, "negative")
+            if model:
+                self.memory.update_model_score(model, command_type, -20.0)
+            self.pending_corrections[chat_id] = exp_id
+            answer_callback(callback_id, "Запомнил 👎")
+            send_message(chat_id, "Что не так?")
+        else:
+            answer_callback(callback_id)
 
     def _get_help(self) -> str:
         return """🤖 Geek26 Bot v3.2
@@ -897,6 +1123,10 @@ class Geek26Bot:
             sys.exit(1)
 
     def _handle_update(self, update: dict) -> None:
+        if update.get("callback_query"):
+            self.handle_callback(update["callback_query"])
+            return
+
         msg = update.get("message", {})
         if not msg:
             return
@@ -943,13 +1173,16 @@ class Geek26Bot:
                 # so we want the full reply returned (not edited in place)
                 reply = self.process_message(item.strip(), user_id, chat_id, show_thinking=False)
                 if reply:
-                    send_message(chat_id, f"**[{i+1}/{len(items)}]** {item.strip()[:40]}\n{'─'*30}\n{reply}")
+                    self._send_with_pending_feedback(
+                        chat_id,
+                        f"**[{i+1}/{len(items)}]** {item.strip()[:40]}\n{'─'*30}\n{reply}",
+                    )
                 time.sleep(1)  # small pause between items
             send_message(chat_id, f"✅ Все {len(items)} задач обработано.")
         else:
             reply = self.process_message(text, user_id, chat_id)
             if reply:
-                send_message(chat_id, reply)
+                self._send_with_pending_feedback(chat_id, reply)
 
 
 if __name__ == "__main__":
